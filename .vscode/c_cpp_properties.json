@@ -1,0 +1,17 @@
+{
+    // 仅用于 IntelliSense 的头文件索引与语法标准，不参与实际编译
+    // 实际的 include 路径 / 编译选项由 CMakeLists.txt 通过 target_include_directories 决定
+    "version": 4,
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/src"
+            ],
+            "defines": [],
+            "cppStandard": "c++17",
+            "cStandard": "c17"
+        }
+    ]
+}

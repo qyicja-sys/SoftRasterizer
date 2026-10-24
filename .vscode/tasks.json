@@ -1,0 +1,52 @@
+{
+    // Ctrl+Shift+B 默认执行 "cmake: build"，它会先执行 "cmake: configure"
+    "version": "2.0.0",
+    "options": {
+        "cwd": "${workspaceFolder}"
+    },
+    "tasks": [
+        {
+            "label": "cmake: configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S", ".",
+                "-B", "build",
+                // 本机没有安装 Visual Studio，CMake 的默认生成器会落到 NMake，
+                // 因找不到 nmake/cl.exe 而配置失败，必须显式指定 MinGW
+                "-G", "MinGW Makefiles",
+                "-DCMAKE_BUILD_TYPE=Debug"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "cmake: build",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build",
+                "--config", "Debug"
+            ],
+            "dependsOn": "cmake: configure",
+            // dependsOrder 默认是 parallel，会和 configure 抢同一个 build 目录
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            // 同时挂 MSVC 和 GCC 的错误匹配器，实际命中的那个才会解析出 Problems 面板条目
+            "problemMatcher": ["$msCompile", "$gcc"]
+        },
+        {
+            "label": "run: SoftRasterizer",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/bin/SoftRasterizer.exe",
+            "options": {
+                // 工作目录就是仓库根目录，framebuffer.tga 会输出到这里
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "cmake: build",
+            "problemMatcher": []
+        }
+    ]
+}

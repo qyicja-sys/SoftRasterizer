@@ -1,0 +1,12 @@
+# CMake 构建产物（configure/build 生成，可随时重建）
+/build/
+
+# 程序渲染输出
+*.tga
+
+# 编辑器/系统临时文件
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+*~
