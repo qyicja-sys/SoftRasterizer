@@ -4,6 +4,9 @@
 # 程序渲染输出
 *.tga
 
+# 本地教程/实现计划（不提交）
+/plan/
+
 # 编辑器/系统临时文件
 Thumbs.db
 desktop.ini

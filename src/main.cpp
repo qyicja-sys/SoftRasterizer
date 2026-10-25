@@ -1,4 +1,6 @@
 #include "tgaimage.h"
+#include "model.h"
+#include <iostream>
 #include <cmath>
 #include <ctime>
 #include <cstdlib>
@@ -31,7 +33,7 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
         std::swap(ax, bx); // 交换 x 坐标
         std::swap(ay, by); // 同时交换对应的 y 坐标，保持线段不变
     }
-    
+
     //最简单的运算
     // for (int x=ax; x<=bx; x++) {
     //     float t = (x-ax) / static_cast<float>(bx-ax);//计算当前点占整条线段的比例
@@ -79,50 +81,103 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
         else
             framebuffer.set(x, y, color);
         ierror += 2 * std::abs(by-ay);//原error += abs(by - ay) / (bx - ax)式子两边同时乘以Δx(bx - ax)，消除除法。实际就是对优化2的式子进行等价交换
-        if (ierror > bx - ax) {//同理
-            y += by > ay ? 1 : -1;
-            ierror -= 2 * (bx-ax);//同理
-        }
+        // if (ierror > bx - ax) {//同理
+        //     y += by > ay ? 1 : -1;
+        //     ierror -= 2 * (bx-ax);//同理
+        // }
+        //进一步优化，if判断会拖慢性能
+        y += (by > ay ? 1 : -1) * (ierror > bx - ax);
+        ierror -= 2 * (bx-ax)   * (ierror > bx - ax);
     }
 }
 
 int main(int argc, char** argv){
-    //定义一张图的高和宽
-    constexpr int width  = 64;
-    constexpr int height = 64;
+    // 画布（帧缓冲）尺寸：800×800 像素。
+    // 下面的坐标映射会用到 width/2 和 height/2，改分辨率只需要改这两个常量。
+    constexpr int width  = 800;
+    constexpr int height = 800;
 
-    //初始化一张tga图片
+    // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
+    // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
     TGAImage framebuffer(width, height, TGAImage::RGB);
 
-    //定义三个坐标
-    // int ax =  7, ay =  3;
-    // int bx = 12, by = 37;
-    // int cx = 62, cy = 203;
+    // 加载 OBJ 模型。路径是相对“当前工作目录”的：
+    // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
+    // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
+    Model newModel;
+    bool flag = newModel.load("obj/diablo3_pose.obj");
+    if(flag){
+        // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
+        Vec3 firstVect = newModel.vert(0);
+        std::cout << "第一个顶点：" << firstVect.x << " " << firstVect.y <<  " " << firstVect.z << std::endl;
 
-    // //开始进行绘制
-    // line(ax, ay, bx, by, framebuffer, blue);//画线从a到b
-    // line(cx, cy, bx, by, framebuffer, green);//画线从c到b
-    // line(ax, ay, cx, cy, framebuffer, red);//画线从a到c
+        // 遍历模型里的每个三角形面（本模型共 5022 个）。
+        // face(i) 返回的是 3 个“顶点下标”，不是坐标；
+        // 必须再用 vert(下标) 查表，才能拿到真正的 3D 坐标。
+        for(int i=0;i<newModel.nfaces();i++){
+            const std::array<int,3> modelFace = newModel.face(i);// 第 i 个面的 3 个顶点下标
 
-    // //在这张tga图片上设置这三个点并带上颜色
-    // framebuffer.set(ax, ay, white);
-    // framebuffer.set(bx, by, white);
-    // framebuffer.set(cx, cy, white);
+            // 先收集这个三角形的 3 个屏幕点，再统一画线。
+            // 这里创建空 vector 后 push 三次；不能写成 vector(3) 再 push，
+            // 那样会先得到 3 个默认元素，再加 3 个新元素，共 6 个。
+            std::vector<screenVert> face;
+            face.reserve(3);
 
-    std::srand(std::time({}));
-    for (int i=0; i<(1<<24); i++) {
-        int ax = rand()%width, ay = rand()%height;
-        int bx = rand()%width, by = rand()%height;
-        TGAColor color = {
-            static_cast<std::uint8_t>(rand()%255),
-            static_cast<std::uint8_t>(rand()%255),
-            static_cast<std::uint8_t>(rand()%255),
-            static_cast<std::uint8_t>(rand()%255),
-        };
-        line(ax, ay, bx, by, framebuffer, color);
+            for(int j = 0;j<3;j++){
+                Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
+
+                // ================= 坐标映射：模型空间 → 屏幕空间 =================
+                // 两套坐标系不一样：
+                //   模型坐标：原点在模型中心，x 向右，y 向上，范围约 [-1, 1]；
+                //   屏幕坐标：原点在画面左上角，x 向右，y 向下，范围 [0, 800)。
+                //
+                // x 方向（不需要翻转）：
+                //   模型 x=-1（最左）→ 屏幕 x=0
+                //   模型 x=+1（最右）→ 屏幕 x=800
+                //   公式：屏幕x = (x + 1) / 2 * 宽 = (x + 1) * (width / 2)
+                //   先把 [-1,1] 平移成 [0,2]，再乘半宽缩放到 [0,800]。
+                //
+                // y 方向（必须翻转）：
+                //   模型 y 越大表示越高；屏幕 y 越大表示越靠下，两者方向相反。
+                //   如果照搬 x 的写法写成 (y + 1) * 半高：
+                //       模型 y=+1（头顶）→ 屏幕 y=800（最底部）
+                //       模型 y=-1（脚底）→ 屏幕 y=0  （最顶部）
+                //   结果就是头朝下、脚朝上。
+                //   所以先取反：屏幕y = (1 - y) / 2 * 高 = (1 - y) * (height / 2)
+                //       模型 y=+1（头顶）→ (1-1)=0 → 屏幕 y=0  （最上方）
+                //       模型 y= 0（腰部）→ (1-0)=1 → 屏幕 y=400（正中间）
+                //       模型 y=-1（脚底）→ (1+1)=2 → 屏幕 y=800（最下方）
+                //   等价于把 [-1,1] 映射成 [2,0]（递减），方向就反过来了。
+                //
+                // z 方向（本轮不参与）：
+                //   屏幕是二维的，line() 只需要 x、y；z 原样保存在 screenVert 中，
+                //   等做 z-buffer（判断哪个三角形在前、谁被遮挡）时才会用到。
+                //
+                // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
+                // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
+                // =============================================================
+                float x = (nowVec.x + 1) * (width  / 2.f);
+                float y = (1 - nowVec.y) * (height / 2.f);
+                screenVert newVec(static_cast<int>(x), static_cast<int>(y), nowVec.z);
+                face.push_back(newVec);
+            }
+
+            // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
+            // 相邻面共用的边会被重复绘制多次，线框阶段无所谓，不必去重。
+            line(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, framebuffer, red);
+            line(face.at(0).x, face.at(0).y, face.at(2).x, face.at(2).y, framebuffer, red);
+            line(face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, red);
+        }
+
+        // 输出 TGA。第二个参数 vflip 必须显式传 false：
+        // write_tga_file 默认 vflip=true，会把文件头声明成“左下角为原点”，
+        // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
+        // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
+        // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
+        framebuffer.write_tga_file("framebuffer.tga", false);
+    }else{
+        std::cerr << "模型加载失败" << std::endl;
     }
 
-    //输出这张图片
-    framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }

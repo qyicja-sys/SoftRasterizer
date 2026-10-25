@@ -28,6 +28,7 @@ target_include_directories(softrasterizer_core PUBLIC ${PROJECT_SOURCE_DIR}/incl
 # 6. 添加可执行文件目标
 add_executable(SoftRasterizer
     src/main.cpp           # 程序入口
+    src/model.cpp
 )
 
 # 7. 为可执行文件指定私有头文件路径

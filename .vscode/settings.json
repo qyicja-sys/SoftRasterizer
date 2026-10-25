@@ -39,7 +39,8 @@
         "streambuf": "cpp",
         "typeinfo": "cpp",
         "cstring": "cpp",
-        "iostream": "cpp"
+        "iostream": "cpp",
+        "ctime": "cpp"
     },
     // 与 tasks.json 中的 -B build 保持一致
     "cmake.sourceDirectory": "${workspaceFolder}",

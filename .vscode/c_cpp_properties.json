@@ -10,6 +10,10 @@
                 "${workspaceFolder}/src"
             ],
             "defines": [],
+            // 与 build/CMakeCache.txt 里实际使用的编译器保持一致，
+            // 否则 IntelliSense 找不到 GCC 的标准库头文件，会满屏红波浪线
+            "compilerPath": "C:/MinGW-w64/bin/g++.exe",
+            "intelliSenseMode": "windows-gcc-x64",
             "cppStandard": "c++17",
             "cStandard": "c17"
         }
