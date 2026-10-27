@@ -191,6 +191,25 @@ void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
+//绘制三角形(扫描线填充，现代做法)
+void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    line(ax, ay, bx, by, framebuffer, color);
+    line(bx, by, cx, cy, framebuffer, color);
+    line(cx, cy, ax, ay, framebuffer, color);
+
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+#pragma omp parallel for// 并行填充包围盒内的像素，并利用线程池加速计算
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
+
 int main(int argc, char** argv){
     // 画布（帧缓冲）尺寸：800×800 像素。
     // 下面的坐标映射会用到 width/2 和 height/2，改分辨率只需要改这两个常量。
@@ -209,9 +228,15 @@ int main(int argc, char** argv){
 
     //绘制三个三角形，方法2
     // 使用线性插值填充三角形
-    triangle_2(7, 45, 35, 100, 40, 60, framebuffer, red);
-    triangle_2(120, 35, 90,   5, 45, 110, framebuffer, white);
-    triangle_2(115, 83, 80,  90, 85, 120, framebuffer, green);
+    // triangle_2(7, 45, 35, 100, 40, 60, framebuffer, red);
+    // triangle_2(120, 35, 90,   5, 45, 110, framebuffer, white);
+    // triangle_2(115, 83, 80,  90, 85, 120, framebuffer, green);
+
+    //绘制三个三角形，方法3
+    // 使用现代做法填充三角形
+    triangle_3(7, 45, 35, 100, 40, 60, framebuffer, red);
+    triangle_3(120, 35, 90,   5, 45, 110, framebuffer, white);
+    triangle_3(115, 83, 80,  90, 85, 120, framebuffer, green);
 
     framebuffer.write_tga_file("framebuffer.tga");
 
