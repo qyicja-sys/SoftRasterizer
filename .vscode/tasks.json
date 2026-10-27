@@ -43,7 +43,7 @@
             "command": "${workspaceFolder}/build/bin/SoftRasterizer.exe",
             "options": {
                 // 工作目录就是仓库根目录，framebuffer.tga 会输出到这里
-                "cwd": "${workspaceFolder}"
+                "cwd": "${workspaceFolder}/out"
             },
             "dependsOn": "cmake: build",
             "problemMatcher": []

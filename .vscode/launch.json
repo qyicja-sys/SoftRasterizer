@@ -9,7 +9,7 @@
             "program": "${workspaceFolder}/build/bin/SoftRasterizer.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/out",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
