@@ -25,11 +25,10 @@ struct screenVert
 };
 
 class Model{
-    private:
-        // 所有顶点，对应 OBJ 的 v 行
-        std::vector<Vec3> vecList;
-        // 所有三角形面，每个元素存 3 个顶点下标（已从 OBJ 的 1-based 转成 0-based）
-        std::vector<std::array<int,3>> faceList;
+    // 所有顶点，对应 OBJ 的 v 行
+    std::vector<Vec3> vecList;
+    // 所有三角形面，每个元素存 3 个顶点下标（已从 OBJ 的 1-based 转成 0-based）
+    std::vector<std::array<int,3>> faceList;
 
     public:
         // 解析 OBJ 文件；打不开、格式错误或索引越界都返回 false
