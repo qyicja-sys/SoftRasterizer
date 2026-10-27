@@ -205,45 +205,56 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
     int bbmaxy = std::max(std::max(ay, by), cy);
-#pragma omp parallel for// 并行填充包围盒内的像素，并利用线程池加速计算
-    for (int x=bbminx; x<=bbmaxx; x++) {
-        for (int y=bbminy; y<=bbmaxy; y++) {
-            framebuffer.set(x, y, color);
-        }
-    }
+    // 并行填充包围盒内的像素，并利用线程池加速计算
+    // for (int x=bbminx; x<=bbmaxx; x++) {
+    //     for (int y=bbminy; y<=bbmaxy; y++) {
+    //         framebuffer.set(x, y, color);
+    //     }
+    // }
 
     // 按 y 坐标升序排列顶点 a、b、c（冒泡排序，好耶！）
     if (ay>by) { std::swap(ax, bx); std::swap(ay, by); }
     if (ay>cy) { std::swap(ax, cx); std::swap(ay, cy); }
     if (by>cy) { std::swap(bx, cx); std::swap(by, cy); }
 
-    int y = bbminy;
-    while(y<=bbmaxy){
-        int x = bbminx;
-        int Ep1 = line_function(ax, ay, bx, by, x, y);
-        int Ep2 = line_function(bx, by, cx, cy, x, y);
-        int Ep3 = line_function(ax, ay, cx, cy, x, y);
-        // int a = bx - ax;
-        // int b = by - ay;
+    int S=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax);
+
+#pragma omp parallel for
+    for(int y=bbminy; y<=bbmaxy; y++){
+        int Ep1 = line_function(ax, ay, bx, by, bbminx, y);
+        int Ep2 = line_function(bx, by, cx, cy, bbminx, y);
+        int Ep3 = line_function(ax, ay, cx, cy, bbminx, y);
+        
         int a1 = ay - by;
         int a2 = by - cy;
         int a3 = ay - cy;
-        while(x<=bbmaxx){
-            if(Ep1<0){
-                if(Ep2>0 && Ep3>0){
+        for(int x=bbminx; x<=bbmaxx; x++){
+            if(S>0){
+                if(Ep1>0 && Ep2>0 && Ep3>0){
+                framebuffer.set(x, y, color);
+            }else{
+                if(Ep1<0 && Ep2<0 && Ep3<0){
                     framebuffer.set(x, y, color);
-                }else{
-                    if(Ep2 == 0 || Ep3 == 0){
-                        break;
-                    }
                 }
             }
+            }
+            if((Ep1>0 && Ep2>0 && Ep3>0) || (Ep1<0 && Ep2<0 && Ep3<0)){
+                framebuffer.set(x, y, color);
+            }
+            // if(Ep1<0){
+            //     if(Ep2>0 && Ep3>0){
+            //         framebuffer.set(x, y, color);
+            //     }else{
+            //         if(Ep2 == 0 || Ep3 == 0){
+            //             break;
+            //         }
+            //     }
+            // }
             Ep1 += a1;
             Ep2 += a2;
             Ep3 += a3;
             x++;
         }
-        y++;
     }
 }
 
