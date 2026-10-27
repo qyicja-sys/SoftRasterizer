@@ -171,7 +171,7 @@ void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     if (by>cy) { std::swap(bx, cx); std::swap(by, cy); }
     int total_height = cy-ay;
 
-    if (ay != by && ay!=0) { // 如果下半部分没有退化
+    if (ay != by) { // 如果下半部分没有退化
         int segment_height = by - ay;
         for (int y=ay; y<=by; y++) { // 从 ay 到 by 扫描水平线
             int x1 = ax + ((cx - ax)*(y - ay)) / total_height;
