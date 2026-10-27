@@ -93,6 +93,10 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
+int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
+    return (Bx - Ax) * (y - Ay) + (By - Ay) * (x - Ax);
+}
+
 //绘制三角形
 //扫描线填充(我自己想的直线方程反函数填充，可以优化)
 void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
@@ -206,6 +210,40 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
         for (int y=bbminy; y<=bbmaxy; y++) {
             framebuffer.set(x, y, color);
         }
+    }
+
+    // 按 y 坐标升序排列顶点 a、b、c（冒泡排序，好耶！）
+    if (ay>by) { std::swap(ax, bx); std::swap(ay, by); }
+    if (ay>cy) { std::swap(ax, cx); std::swap(ay, cy); }
+    if (by>cy) { std::swap(bx, cx); std::swap(by, cy); }
+
+    int y = bbminy;
+    while(y<=bbmaxy){
+        int x = bbminx;
+        int Ep1 = line_function(ax, ay, bx, by, x, y);
+        int Ep2 = line_function(bx, by, cx, cy, x, y);
+        int Ep3 = line_function(ax, ay, cx, cy, x, y);
+        // int a = bx - ax;
+        // int b = by - ay;
+        int a1 = ay - by;
+        int a2 = by - cy;
+        int a3 = ay - cy;
+        while(x<=bbmaxx){
+            if(Ep1<0){
+                if(Ep2>0 && Ep3>0){
+                    framebuffer.set(x, y, color);
+                }else{
+                    if(Ep2 == 0 || Ep3 == 0){
+                        break;
+                    }
+                }
+            }
+            Ep1 += a1;
+            Ep2 += a2;
+            Ep3 += a3;
+            x++;
+        }
+        y++;
     }
 }
 
