@@ -195,7 +195,7 @@ void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
-//绘制三角形(扫描线填充，现代做法)
+//绘制三角形(扫描线填充，现代做法，边函数+增量计算)
 void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
     // line(ax, ay, bx, by, framebuffer, color);
     // line(bx, by, cx, cy, framebuffer, color);
@@ -230,15 +230,6 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
             if((Ep1>=0 && Ep2>=0 && Ep3>=0) || (Ep1<=0 && Ep2<=0 && Ep3<=0)){
                 framebuffer.set(x, y, color);
             }
-            // if(Ep1<0){
-            //     if(Ep2>0 && Ep3>0){
-            //         framebuffer.set(x, y, color);
-            //     }else{
-            //         if(Ep2 == 0 || Ep3 == 0){
-            //             break;
-            //         }
-            //     }
-            // }
             Ep1 += a1;
             Ep2 += a2;
             Ep3 += a3;
@@ -256,26 +247,6 @@ int main(int argc, char** argv){
     // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
     // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
     TGAImage framebuffer(width, height, TGAImage::RGB);
-
-    //绘制三个三角形，方法1
-    //使用反函数填充三角形(可优化)
-    // triangle_1(7, 45, 35, 100, 40, 60, framebuffer, red);
-    // triangle_1(120, 35, 90,   5, 45, 110, framebuffer, white);
-    // triangle_1(115, 83, 80,  90, 85, 120, framebuffer, green);
-
-    //绘制三个三角形，方法2
-    // 使用线性插值填充三角形
-    // triangle_2(7, 45, 35, 100, 40, 60, framebuffer, red);
-    // triangle_2(120, 35, 90,   5, 45, 110, framebuffer, white);
-    // triangle_2(115, 83, 80,  90, 85, 120, framebuffer, green);
-
-    //绘制三个三角形，方法3
-    // 使用现代做法填充三角形
-    // triangle_3(7, 45, 35, 100, 40, 60, framebuffer, red);
-    // triangle_3(120, 35, 90,   5, 45, 110, framebuffer, white);
-    // triangle_3(115, 83, 80,  90, 85, 120, framebuffer, green);
-
-    framebuffer.write_tga_file("framebuffer.tga");
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
@@ -340,11 +311,6 @@ int main(int argc, char** argv){
             }
 
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
-            // 相邻面共用的边会被重复绘制多次，线框阶段无所谓，不必去重。
-            // line(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, framebuffer, red);
-            // line(face.at(0).x, face.at(0).y, face.at(2).x, face.at(2).y, framebuffer, red);
-            // line(face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, red);
-
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
                 triangle_3(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
