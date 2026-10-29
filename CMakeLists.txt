@@ -38,6 +38,26 @@ target_include_directories(SoftRasterizer PRIVATE ${PROJECT_SOURCE_DIR}/src)
 # 8. 将 softrasterizer_core 链接到 SoftRasterizer
 target_link_libraries(SoftRasterizer PRIVATE softrasterizer_core)
 
+# 8.2 测试 / 实验用可执行目标（test/main.cpp）
+#     test 和 src 下各有一个 main()，不能放进同一个可执行文件，因此单独建目标。
+#     输出到 build/bin，与 SoftRasterizer.exe 并列，便于 launch.json 引用。
+add_executable(SoftRasterizerTest
+    test/main.cpp
+)
+
+target_include_directories(SoftRasterizerTest PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(SoftRasterizerTest PRIVATE softrasterizer_core)
+
+if(MINGW)
+    target_link_options(SoftRasterizerTest PRIVATE -static)
+endif()
+
+set_target_properties(SoftRasterizerTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY         ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
+)
+
 # 8.1 静态链接 GCC 运行时（libstdc++ / libgcc / winpthread）
 #     PATH 里 D:\Git\mingw64\bin 排在 C:\MinGW-w64\bin 之前，动态链接时程序会先加载
 #     Git 自带的新版 DLL，与本机 GCC 8.1 编译的二进制不兼容，调试器启动即报
