@@ -93,8 +93,14 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
+//计算边函数
 int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
     return (Bx - Ax) * (y - Ay) - (By - Ay) * (x - Ax);
+}
+
+//计算三角形有向面积
+double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
+    return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
 }
 
 //绘制三角形
@@ -195,7 +201,7 @@ void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
-//绘制三角形(扫描线填充，现代做法，边函数+增量计算)
+//绘制三角形(扫描线填充，边函数+增量计算)
 void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
     // line(ax, ay, bx, by, framebuffer, color);
     // line(bx, by, cx, cy, framebuffer, color);
@@ -237,6 +243,25 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
+//绘制三角形面积，利用重心坐标判断像素是否在三角形内
+void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+
+#pragma omp parallel for
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+            double beta  = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
+            double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
+            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+            framebuffer.set(x, y, color);
+        }
+    }
+}
 
 int main(int argc, char** argv){
     // 画布（帧缓冲）尺寸：800×800 像素。
@@ -313,7 +338,7 @@ int main(int argc, char** argv){
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-                triangle_3(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
+                triangle_4(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
         }
 
         // 输出 TGA。第二个参数 vflip 必须显式传 false：
