@@ -103,6 +103,11 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
     return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
 }
 
+//三个点的叉积计算
+int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
+    return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
+}
+
 //绘制三角形
 //扫描线填充(我自己想的直线方程反函数填充，可以优化)
 void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
@@ -250,6 +255,10 @@ void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     int bbmaxx = std::max(std::max(ax, bx), cx);
     int bbmaxy = std::max(std::max(ay, by), cy);
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
 #pragma omp parallel for
     for (int x=bbminx; x<=bbmaxx; x++) {
@@ -277,7 +286,7 @@ int main(int argc, char** argv){
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
     Model newModel;
-    bool flag = newModel.load("obj/diablo3_pose.obj");
+    bool flag = newModel.load("obj/african_head.obj");
     if(flag){
         // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
         Vec3 firstVect = newModel.vert(0);
