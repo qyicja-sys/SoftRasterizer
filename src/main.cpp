@@ -115,16 +115,6 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     line(bx, by, cx, cy, framebuffer, color);
     line(cx, cy, ax, ay, framebuffer, color);
 
-    // 1. 算出三条边的斜率
-    float k_AB = static_cast<float>(by - ay) / (bx - ax);
-    float b_AB = ay - k_AB * ax;
-
-    float k_BC = static_cast<float>(cy - by) / (cx - bx);
-    float b_BC = by - k_BC * bx;
-
-    float k_AC = static_cast<float>(cy - ay) / (cx - ax);
-    float b_AC = ay - k_AC * ax;
-
     int min_y = std::min({ay, by, cy});
     int max_y = std::max({ay, by, cy});
 
@@ -145,12 +135,14 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
             int high_y = std::max(y1, y2);
 
             if (y >= low_y && y < high_y) {
+                //线段参数函数，t 表示「从起点走到终点的比例」
                 float t = static_cast<float>(y - y1) / (y2 - y1);
                 float x = x1 + t * (x2 - x1);
                 intersect_x.push_back(x);
             }
         };
 
+        //判断扫描线落在哪两条边，直接无脑三次就不用判断具体是哪两条了
         add_intersection(ax, ay, bx, by);
         add_intersection(bx, by, cx, cy);
         add_intersection(ax, ay, cx, cy);
