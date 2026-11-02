@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -36,7 +37,7 @@ int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
     return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
 }
 
-// Bresenham 画线，triangle_1 / triangle_2 依赖它描三角形的三条边。
+// Bresenham 画线，triangle_1 依赖它描三角形的三条边。
 void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
     // 如果线比较陡（y 跨度大于 x 跨度），以 y 为主步进变量，先转置
     bool steep = std::abs(ax-bx) < std::abs(ay-by);
@@ -251,9 +252,53 @@ void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
+// 绘制三角形：重心坐标 + 增量计算
+void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+
+    double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    double alpha_area_start = signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
+    double beta_area_start  = signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
+    double gamma_area_start = signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
+
+    // X 方向的增量
+    double a1 = (by - cy)*.5;
+    double a2 = (cy - ay)*.5;
+    double a3 = (ay - by)*.5;
+
+    // Y 方向的增量
+    double b1 = (cx - bx)*.5;
+    double b2 = (ax - cx)*.5;
+    double b3 = (bx - ax)*.5;
+
+#pragma omp parallel for
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        double alpha_init = alpha_area_start + (x - bbminx)*a1;
+        double beta_init  = beta_area_start  + (x - bbminx)*a2;
+        double gamma_init = gamma_area_start + (x - bbminx)*a3;
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            double alpha = alpha_init / triangle_area;
+            double beta  = beta_init / triangle_area;
+            double gamma = gamma_init / triangle_area;
+            alpha_init += b1;
+            beta_init += b2;
+            gamma_init += b3;
+            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
 // ================================ 测试脚手架 ================================
 
-// 统一后的三角形类型：只保留屏幕坐标，避免每轮重复做模型空间 → 屏幕空间的映射。
+// 统一后的三角形类型：只保留屏幕坐标。
 struct BenchTriangle {
     int ax, ay;
     int bx, by;
@@ -270,12 +315,13 @@ struct BenchEntry {
 };
 
 // 测试顺序固定，便于结果对照；计时时每轮会交换正序 / 倒序执行。
-constexpr std::array<BenchEntry, 5> benchmarks = {{
+constexpr std::array<BenchEntry, 6> benchmarks = {{
     {"triangle_1",   triangle_1},
     {"triangle_2",   triangle_2},
     {"triangle_3_1", triangle_3_1},
     {"triangle_3",   triangle_3},
     {"triangle_4",   triangle_4},
+    {"triangle_5",   triangle_5},
 }};
 
 struct TimingStats {
@@ -285,8 +331,27 @@ struct TimingStats {
 };
 
 struct PixelCheck {
-    std::size_t nonBlack = 0;              // 该函数实际写入的像素数
+    std::size_t nonBlack = 0;               // 该函数实际写入的像素数
     std::size_t differentFromReference = 0; // 与基准图颜色不同的像素数
+};
+
+// 一个测试条件（一个分辨率 / 一种数量 / 一种大小 / 一种形状）。
+struct BenchmarkCase {
+    std::string label;
+    std::vector<BenchTriangle> triangles;
+    int width = 0;
+    int height = 0;
+    std::string imageName; // 代表图文件名，空则不输出图片
+};
+
+// 一组测试（模型、分辨率、数量、大小、形状）。
+struct BenchmarkGroup {
+    std::string title;
+    std::string outputDir;
+    int rounds = 1;
+    bool verbose = false;      // 是否逐轮打印（模型组使用）
+    bool checked = false;      // 是否做像素校验并保存每个实现的图（模型组使用）
+    std::vector<BenchmarkCase> cases;
 };
 
 // 把模型的所有面一次性转换成屏幕三角形。坐标映射与 src/main.cpp 完全一致：
@@ -361,6 +426,271 @@ PixelCheck checkAgainstReference(const TGAImage &image, const TGAImage &referenc
     return check;
 }
 
+// 保证三角形是正面朝向（叉积 > 0），否则所有实现的背面剔除都会直接 return。
+void ensureFrontFacing(BenchTriangle &triangle) {
+    if (cross_product(triangle.ax, triangle.ay, triangle.bx, triangle.by, triangle.cx, triangle.cy) <= 0) {
+        std::swap(triangle.bx, triangle.cx);
+        std::swap(triangle.by, triangle.cy);
+    }
+}
+
+constexpr double kPi = 3.14159265358979323846;
+
+// 在画布上生成 count 个随机三角形。
+// radiusMin / radiusMax 以 1024 画布为基准，实际会按画布尺寸等比缩放。
+std::vector<BenchTriangle> makeRandomTriangles(std::size_t count,
+                                               int radiusMin, int radiusMax,
+                                               int width, int height,
+                                               unsigned seed) {
+    const double scale = static_cast<double>(width) / 1024.0;
+    const int scaledMin = std::max(1, static_cast<int>(radiusMin * scale));
+    const int scaledMax = std::max(scaledMin, static_cast<int>(radiusMax * scale));
+
+    const int margin = std::min(scaledMax + 2, std::max(1, std::min(width, height) / 2 - 1));
+
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<int> xDist(margin, width - 1 - margin);
+    std::uniform_int_distribution<int> yDist(margin, height - 1 - margin);
+    std::uniform_int_distribution<int> radiusDist(scaledMin, scaledMax);
+    std::uniform_real_distribution<double> angleDist(0.0, 2.0 * kPi);
+
+    std::vector<BenchTriangle> triangles;
+    triangles.reserve(count);
+
+    std::size_t attempts = 0;
+    const std::size_t maxAttempts = count * 50;
+    while (triangles.size() < count && attempts++ < maxAttempts) {
+        const int centerX = xDist(rng);
+        const int centerY = yDist(rng);
+
+        std::array<int, 3> xs{};
+        std::array<int, 3> ys{};
+        for (int j = 0; j < 3; ++j) {
+            const double angle = angleDist(rng);
+            const int radius = radiusDist(rng);
+            xs[j] = std::clamp(centerX + static_cast<int>(std::cos(angle) * radius), 0, width - 1);
+            ys[j] = std::clamp(centerY + static_cast<int>(std::sin(angle) * radius), 0, height - 1);
+        }
+
+        BenchTriangle triangle{xs[0], ys[0], xs[1], ys[1], xs[2], ys[2]};
+        ensureFrontFacing(triangle);
+
+        // 三个点共线时叉积仍为 0，换一个随机三角形重试。
+        if (cross_product(triangle.ax, triangle.ay, triangle.bx, triangle.by, triangle.cx, triangle.cy) > 0) {
+            triangles.push_back(triangle);
+        }
+    }
+    return triangles;
+}
+
+enum class ShapeKind {
+    Equilateral,
+    Slender,
+    Degenerate
+};
+
+// 生成指定形状的三角形：
+//   等边  -> 三条边接近等长
+//   细长  -> 很窄但很高，包围盒扫描量大、实际覆盖面积小
+//   退化  -> 三点共线，叉积为 0，会被所有实现的背面剔除直接丢弃
+std::vector<BenchTriangle> makeShapeTriangles(ShapeKind kind, std::size_t count,
+                                              int width, int height, unsigned seed) {
+    const double scale = static_cast<double>(width) / 1024.0;
+
+    int span = 0;
+    switch (kind) {
+        case ShapeKind::Equilateral:
+            span = static_cast<int>(160 * scale);
+            break;
+        case ShapeKind::Slender:
+        case ShapeKind::Degenerate:
+            span = static_cast<int>(400 * scale);
+            break;
+    }
+    span = std::clamp(span, 4, std::min(width, height) - 2);
+
+    const int margin = std::min(span + 2, std::max(1, std::min(width, height) / 2 - 1));
+
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<int> xDist(margin, width - 1 - margin);
+    std::uniform_int_distribution<int> yDist(margin, height - 1 - margin);
+
+    const int equilateralHeight = static_cast<int>(span * std::sqrt(3.0) / 2.0);
+    const int slenderWidth = std::max(2, static_cast<int>(12 * scale));
+
+    std::vector<BenchTriangle> triangles;
+    triangles.reserve(count);
+
+    for (std::size_t i = 0; i < count; ++i) {
+        const int centerX = xDist(rng);
+        const int centerY = yDist(rng);
+
+        BenchTriangle triangle{0, 0, 0, 0, 0, 0};
+        switch (kind) {
+            case ShapeKind::Equilateral:
+                triangle = {centerX, centerY - equilateralHeight / 2,
+                            centerX - span / 2, centerY + equilateralHeight / 2,
+                            centerX + span / 2, centerY + equilateralHeight / 2};
+                break;
+            case ShapeKind::Slender:
+                triangle = {centerX, centerY - span / 2,
+                            centerX - slenderWidth / 2, centerY + span / 2,
+                            centerX + slenderWidth / 2, centerY + span / 2};
+                break;
+            case ShapeKind::Degenerate: {
+                const int slope = static_cast<int>(span * 0.1);
+                triangle = {centerX - span / 2, centerY + slope,
+                            centerX, centerY,
+                            centerX + span / 2, centerY - slope};
+                break;
+            }
+        }
+
+        if (kind != ShapeKind::Degenerate) {
+            ensureFrontFacing(triangle);
+        }
+        triangles.push_back(triangle);
+    }
+    return triangles;
+}
+
+// 找到 triangle_3 在 benchmark 表里的下标，作为像素校验的基准实现。
+std::size_t findReferenceIndex() {
+    for (std::size_t i = 0; i < benchmarks.size(); ++i) {
+        if (benchmarks[i].fn == triangle_3) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+// 运行一整组测试：对组内每个条件，让所有实现各跑 rounds 轮并输出平均值。
+void runBenchmarkGroup(const BenchmarkGroup &group) {
+    std::cout << "\n==================== " << group.title << " ====================\n";
+    std::cout << "计时轮数 : " << group.rounds << "\n";
+
+    std::error_code errorCode;
+    std::filesystem::create_directories(group.outputDir, errorCode);
+    if (errorCode) {
+        std::cerr << "无法创建输出目录 " << group.outputDir << ": " << errorCode.message() << "\n";
+    }
+
+    std::cout << std::left << std::setw(16) << "条件" << std::right;
+    for (const BenchEntry &entry : benchmarks) {
+        std::cout << std::setw(16) << (std::string(entry.name) + "(ms)");
+    }
+    std::cout << "\n";
+
+    bool anyImageFailed = false;
+
+    for (const BenchmarkCase &benchmarkCase : group.cases) {
+        TGAImage timingFramebuffer(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+
+        // 预热一轮（不计时），让 CPU 频率和缓存进入稳定状态。
+        for (const BenchEntry &entry : benchmarks) {
+            renderAll(benchmarkCase.triangles, timingFramebuffer, entry.fn);
+        }
+
+        std::vector<std::vector<double>> samples(
+            benchmarks.size(), std::vector<double>(static_cast<std::size_t>(group.rounds)));
+
+        for (int round = 0; round < group.rounds; ++round) {
+            // 奇偶轮交换执行顺序，避免固定顺序带来的缓存 / 频率偏差。
+            for (std::size_t step = 0; step < benchmarks.size(); ++step) {
+                const std::size_t index = (round % 2 == 0) ? step : (benchmarks.size() - 1 - step);
+                samples[index][round] =
+                    renderAllTimed(benchmarkCase.triangles, timingFramebuffer, benchmarks[index].fn);
+            }
+
+            if (group.verbose) {
+                std::cout << std::setw(4) << (round + 1);
+                for (std::size_t index = 0; index < benchmarks.size(); ++index) {
+                    std::cout << std::setw(16) << std::fixed << std::setprecision(2) << samples[index][round];
+                }
+                std::cout << "\n";
+            }
+        }
+
+        std::vector<TimingStats> stats;
+        stats.reserve(benchmarks.size());
+        for (const std::vector<double> &functionSamples : samples) {
+            stats.push_back(summarize(functionSamples));
+        }
+
+        std::size_t fastestIndex = 0;
+        for (std::size_t i = 1; i < stats.size(); ++i) {
+            if (stats[i].average < stats[fastestIndex].average) {
+                fastestIndex = i;
+            }
+        }
+
+        std::cout << std::left << std::setw(16) << benchmarkCase.label << std::right;
+        for (const TimingStats &stat : stats) {
+            std::cout << std::setw(16) << std::fixed << std::setprecision(2) << stat.average;
+        }
+        std::cout << "\n";
+
+        if (group.verbose) {
+            std::cout << "\n函数           平均(ms)     最快(ms)     最慢(ms)     相对最快(倍数)\n";
+            for (std::size_t i = 0; i < stats.size(); ++i) {
+                std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
+                          << std::setw(13) << stats[i].average
+                          << std::setw(13) << stats[i].minimum
+                          << std::setw(13) << stats[i].maximum
+                          << std::setw(16) << (stats[i].average / stats[fastestIndex].average) << "\n";
+            }
+        }
+
+        std::cout << "  最快: " << benchmarks[fastestIndex].name
+                  << "（平均 " << stats[fastestIndex].average << " ms）\n";
+
+        if (group.checked) {
+            // 模型组：以 triangle_3 为基准做像素校验，并保存每个实现的输出图。
+            const std::size_t referenceIndex = findReferenceIndex();
+            TGAImage reference(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+            renderAll(benchmarkCase.triangles, reference, benchmarks[referenceIndex].fn);
+
+            std::cout << "\n像素校验（基准 = triangle_3）\n";
+            std::cout << "注：所有实现都带背面剔除；triangle_1 先描边再剔除，"
+                         "triangle_2 只做填充，因此差异属于预期行为。\n";
+            std::cout << "函数           非黑像素     与基准不同像素\n";
+
+            for (std::size_t i = 0; i < benchmarks.size(); ++i) {
+                TGAImage generated;
+                const TGAImage *image = &reference;
+                if (i != referenceIndex) {
+                    generated = TGAImage(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                    renderAll(benchmarkCase.triangles, generated, benchmarks[i].fn);
+                    image = &generated;
+                }
+
+                const PixelCheck check = checkAgainstReference(*image, reference);
+                std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
+                          << std::setw(13) << check.nonBlack
+                          << std::setw(18) << check.differentFromReference << "\n";
+
+                const std::string imagePath =
+                    (std::filesystem::path(group.outputDir) / ("bench_" + std::string(benchmarks[i].name) + ".tga")).string();
+                anyImageFailed = !image->write_tga_file(imagePath, false) || anyImageFailed;
+            }
+        } else if (!benchmarkCase.imageName.empty()) {
+            // 其它组只输出 triangle_3 的代表图，用于肉眼确认该条件下的几何覆盖情况。
+            TGAImage image(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+            renderAll(benchmarkCase.triangles, image, triangle_3);
+
+            const std::string imagePath =
+                (std::filesystem::path(group.outputDir) / benchmarkCase.imageName).string();
+            anyImageFailed = !image.write_tga_file(imagePath, false) || anyImageFailed;
+        }
+    }
+
+    if (!anyImageFailed) {
+        std::cout << "结果图片 : " << group.outputDir << "/\n";
+    } else {
+        std::cerr << "部分结果图片写出失败（当前工作目录可能不可写）\n";
+    }
+}
+
 // 模型路径兜底：既支持在仓库根目录运行，也支持在 build/bin 下直接运行。
 std::string findModelPath(const std::string &requested) {
     if (std::filesystem::exists(requested)) {
@@ -382,11 +712,12 @@ std::string findModelPath(const std::string &requested) {
 }
 
 void printUsage(const char *programName) {
-    std::cout << "用法: " << programName << " [计时轮数=50] [模型路径=obj/diablo3_pose.obj] [画布边长=1024]\n";
+    std::cout << "用法: " << programName << " [模型测试轮数=50] [模型路径=obj/diablo3_pose.obj] [基准画布边长=1024]\n";
+    std::cout << "派生测试（分辨率/数量/大小/形状）的轮数自动取 max(3, 模型测试轮数 / 20)。\n";
 }
 
 int main(int argc, char **argv) {
-    int rounds = 10;   // 默认计时轮数
+    int rounds = 50;   // 模型测试的默认轮数
     int size = 1024;
     std::string requestedModel = "obj/diablo3_pose.obj";
 
@@ -424,109 +755,132 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const std::vector<BenchTriangle> triangles = buildTriangles(model, size, size);
+    const std::vector<BenchTriangle> modelTriangles = buildTriangles(model, size, size);
+    const int derivedRounds = std::max(3, rounds / 20);
 
-    std::cout << "========================== 三角形光栅化性能对比 ==========================\n";
+    std::cout << "====================== 三角形光栅化性能测试 ======================\n";
     std::cout << "模型文件 : " << modelPath << "\n";
     std::cout << "模型规模 : " << model.nverts() << " 个顶点, " << model.nfaces() << " 个三角形\n";
-    std::cout << "画布尺寸 : " << size << " x " << size << "\n";
-    std::cout << "计时轮数 : " << rounds << "（每轮把模型全部三角形绘制一遍）\n";
-    std::cout << "测速对象 : triangle_1, triangle_2, triangle_3_1, triangle_3, triangle_4\n";
+    std::cout << "基准画布 : " << size << " x " << size << "\n";
+    std::cout << "模型轮数 : " << rounds << "，派生测试轮数 : " << derivedRounds << "\n";
+    std::cout << "测速对象 : triangle_1, triangle_2, triangle_3_1, triangle_3, triangle_4, triangle_5\n";
 #ifdef _OPENMP
     std::cout << "OpenMP   : 已启用\n";
 #else
     std::cout << "OpenMP   : 未启用（#pragma omp 被忽略，与 src 目标的构建配置一致）\n";
 #endif
-    std::cout << "--------------------------------------------------------------------------\n";
+    std::cout << "输出目录 : out/test/{model,resolution,count,size,shape}\n";
 
-    // 预热一轮（不计时），让 CPU 频率、指令缓存和图像内存进入稳定状态。
-    TGAImage timingFramebuffer(size, size, TGAImage::RGB);
-    for (const BenchEntry &entry : benchmarks) {
-        renderAll(triangles, timingFramebuffer, entry.fn);
-    }
+    // 1. 模型测试：完整模型，逐轮输出 + 像素校验 + 每个实现一张图。
+    BenchmarkGroup modelGroup;
+    modelGroup.title = "模型测试（diablo3_pose.obj）";
+    modelGroup.outputDir = "out/test/model";
+    modelGroup.rounds = rounds;
+    modelGroup.verbose = true;
+    modelGroup.checked = true;
+    modelGroup.cases.push_back({"diablo3_pose", modelTriangles, size, size, ""});
+    runBenchmarkGroup(modelGroup);
 
-    std::vector<std::vector<double>> samples(
-        benchmarks.size(), std::vector<double>(static_cast<std::size_t>(rounds)));
+    // 2. 分辨率测试：同一模型，画布从 1/4 到 2 倍基准尺寸。
+    BenchmarkGroup resolutionGroup;
+    resolutionGroup.title = "分辨率测试";
+    resolutionGroup.outputDir = "out/test/resolution";
+    resolutionGroup.rounds = derivedRounds;
 
-    std::cout << "轮次";
-    for (const BenchEntry &entry : benchmarks) {
-        std::cout << std::setw(18) << (std::string(entry.name) + "(ms)");
-    }
-    std::cout << "\n";
-
-    for (int round = 0; round < rounds; ++round) {
-        // 奇偶轮交换执行顺序，避免固定顺序带来的缓存 / 频率偏差。
-        for (std::size_t step = 0; step < benchmarks.size(); ++step) {
-            const std::size_t index = (round % 2 == 0) ? step : (benchmarks.size() - 1 - step);
-            samples[index][round] = renderAllTimed(triangles, timingFramebuffer, benchmarks[index].fn);
-        }
-
-        std::cout << std::setw(4) << (round + 1);
-        for (std::size_t index = 0; index < benchmarks.size(); ++index) {
-            std::cout << std::setw(18) << std::fixed << std::setprecision(2) << samples[index][round];
-        }
-        std::cout << "\n";
-    }
-
-    std::vector<TimingStats> stats;
-    stats.reserve(benchmarks.size());
-    for (const std::vector<double> &functionSamples : samples) {
-        stats.push_back(summarize(functionSamples));
-    }
-
-    std::size_t fastestIndex = 0;
-    for (std::size_t i = 1; i < stats.size(); ++i) {
-        if (stats[i].average < stats[fastestIndex].average) {
-            fastestIndex = i;
+    std::vector<int> resolutions;
+    for (int candidate : {size / 4, size / 2, size, size * 2}) {
+        if (candidate >= 16 &&
+            std::find(resolutions.begin(), resolutions.end(), candidate) == resolutions.end()) {
+            resolutions.push_back(candidate);
         }
     }
-    const double fastestAverage = stats[fastestIndex].average;
-
-    std::cout << "--------------------------------------------------------------------------\n";
-    std::cout << std::fixed << std::setprecision(2);
-    std::cout << "函数           平均(ms)     最快(ms)     最慢(ms)     相对最快(倍数)\n";
-    for (std::size_t i = 0; i < benchmarks.size(); ++i) {
-        std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
-                  << std::setw(13) << stats[i].average
-                  << std::setw(13) << stats[i].minimum
-                  << std::setw(13) << stats[i].maximum
-                  << std::setw(16) << (stats[i].average / fastestAverage) << "\n";
+    for (int resolution : resolutions) {
+        const std::string label = std::to_string(resolution) + " x " + std::to_string(resolution);
+        const std::string imageName = "res_" + std::to_string(resolution) + ".tga";
+        resolutionGroup.cases.push_back(
+            {label, buildTriangles(model, resolution, resolution), resolution, resolution, imageName});
     }
-    std::cout << "最快实现 : " << benchmarks[fastestIndex].name
-              << "（平均 " << stats[fastestIndex].average << " ms）\n";
+    runBenchmarkGroup(resolutionGroup);
 
-    // 像素校验：以 triangle_3 为基准（它不剔除背面，覆盖全部三角形）。
-    const std::size_t referenceIndex = 3; // benchmarks 中 triangle_3 的下标
-    TGAImage reference(size, size, TGAImage::RGB);
-    renderAll(triangles, reference, benchmarks[referenceIndex].fn);
+    // 3. 三角形数量测试：固定大小，数量从 100 到 10000。
+    BenchmarkGroup countGroup;
+    countGroup.title = "三角形数量测试";
+    countGroup.outputDir = "out/test/count";
+    countGroup.rounds = derivedRounds;
 
-    std::cout << "\n像素校验（基准 = triangle_3）\n";
-    std::cout << "注：所有实现都带背面剔除；triangle_1 先描边再剔除（背面三角形的边线仍会保留），"
-                 "triangle_2 只做填充，因此差异属于预期行为。\n";
-    std::cout << "函数           非黑像素     与基准不同像素\n";
-
-    std::error_code errorCode;
-    std::filesystem::create_directories("out", errorCode);
-    bool allImagesWritten = true;
-
-    for (const BenchEntry &entry : benchmarks) {
-        TGAImage framebuffer(size, size, TGAImage::RGB);
-        renderAll(triangles, framebuffer, entry.fn);
-
-        const PixelCheck check = checkAgainstReference(framebuffer, reference);
-        std::cout << std::left << std::setw(14) << entry.name << std::right
-                  << std::setw(13) << check.nonBlack
-                  << std::setw(18) << check.differentFromReference << "\n";
-
-        const std::string outputPath = "out/bench_" + std::string(entry.name) + ".tga";
-        allImagesWritten = framebuffer.write_tga_file(outputPath, false) && allImagesWritten;
+    for (std::size_t count : {static_cast<std::size_t>(100), static_cast<std::size_t>(1000),
+                              static_cast<std::size_t>(10000)}) {
+        const std::string label = std::to_string(count) + " 个";
+        const std::string imageName = "count_" + std::to_string(count) + ".tga";
+        countGroup.cases.push_back({
+            label,
+            makeRandomTriangles(count, 6, 12, size, size, static_cast<unsigned>(2024 + count)),
+            size,
+            size,
+            imageName
+        });
     }
+    runBenchmarkGroup(countGroup);
 
-    if (allImagesWritten) {
-        std::cout << "结果图片 : out/bench_<函数名>.tga（共 " << benchmarks.size() << " 张）\n";
-    } else {
-        std::cerr << "部分结果图片写出失败（当前工作目录可能不可写）\n";
+    // 4. 三角形大小测试：固定 200 个三角形，只改变单个三角形的大小。
+    BenchmarkGroup sizeGroup;
+    sizeGroup.title = "三角形大小测试（每种大小 200 个）";
+    sizeGroup.outputDir = "out/test/size";
+    sizeGroup.rounds = derivedRounds;
+
+    struct SizeSpec {
+        const char *label;
+        const char *imageName;
+        int radiusMin;
+        int radiusMax;
+    };
+    const SizeSpec sizeSpecs[] = {
+        {"小", "size_small.tga", 4, 8},
+        {"中", "size_medium.tga", 16, 32},
+        {"大", "size_large.tga", 48, 96},
+    };
+    for (const SizeSpec &spec : sizeSpecs) {
+        sizeGroup.cases.push_back({
+            spec.label,
+            makeRandomTriangles(200, spec.radiusMin, spec.radiusMax, size, size,
+                                static_cast<unsigned>(3000 + spec.radiusMin)),
+            size,
+            size,
+            spec.imageName
+        });
     }
+    runBenchmarkGroup(sizeGroup);
+
+    // 5. 三角形形状测试：等边、细长、退化。
+    BenchmarkGroup shapeGroup;
+    shapeGroup.title = "三角形形状测试";
+    shapeGroup.outputDir = "out/test/shape";
+    shapeGroup.rounds = derivedRounds;
+
+    struct ShapeSpec {
+        ShapeKind kind;
+        const char *label;
+        const char *imageName;
+        std::size_t count;
+    };
+    const ShapeSpec shapeSpecs[] = {
+        {ShapeKind::Equilateral, "等边", "shape_equilateral.tga", 200},
+        {ShapeKind::Slender,     "细长", "shape_slender.tga",     500},
+        {ShapeKind::Degenerate,  "退化", "shape_degenerate.tga",  20000},
+    };
+    for (const ShapeSpec &spec : shapeSpecs) {
+        shapeGroup.cases.push_back({
+            spec.label,
+            makeShapeTriangles(spec.kind, spec.count, size, size,
+                               static_cast<unsigned>(4000 + static_cast<int>(spec.kind))),
+            size,
+            size,
+            spec.imageName
+        });
+    }
+    runBenchmarkGroup(shapeGroup);
+
+    std::cout << "\n全部测试完成，结果图片与分类目录都在 out/test/ 下。\n";
 
     // 结果打印完后暂停，避免程序一闪而过看不到上面的计时数据。
     std::cout << "\n按回车键退出...";
