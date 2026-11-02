@@ -114,6 +114,11 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     line(ax, ay, bx, by, framebuffer, color);
     line(bx, by, cx, cy, framebuffer, color);
     line(cx, cy, ax, ay, framebuffer, color);
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
     int min_y = std::min({ay, by, cy});
     int max_y = std::max({ay, by, cy});
@@ -168,9 +173,11 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 
 //绘制三角形(扫描线填充，采用线性插值)
 void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    line(ax, ay, bx, by, framebuffer, color);
-    line(bx, by, cx, cy, framebuffer, color);
-    line(cx, cy, ax, ay, framebuffer, color);
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
     // 按 y 坐标升序排列顶点 a、b、c（冒泡排序，好耶！）
     if (ay>by) { std::swap(ax, bx); std::swap(ay, by); }
@@ -198,27 +205,17 @@ void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
-//绘制三角形(扫描线填充，边函数+增量计算)
-void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // line(ax, ay, bx, by, framebuffer, color);
-    // line(bx, by, cx, cy, framebuffer, color);
-    // line(cx, cy, ax, ay, framebuffer, color);
-
+//绘制三角形(扫描线填充，边函数+单方向增量计算)
+void triangle_3_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
     int bbmaxy = std::max(std::max(ay, by), cy);
-    // 并行填充包围盒内的像素，并利用线程池加速计算
-    // for (int x=bbminx; x<=bbmaxx; x++) {
-    //     for (int y=bbminy; y<=bbmaxy; y++) {
-    //         framebuffer.set(x, y, color);
-    //     }
-    // }
-
-    // 按 y 坐标升序排列顶点 a、b、c（冒泡排序，好耶！）
-    if (ay>by) { std::swap(ax, bx); std::swap(ay, by); }
-    if (ay>cy) { std::swap(ax, cx); std::swap(ay, cy); }
-    if (by>cy) { std::swap(bx, cx); std::swap(by, cy); }
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
 #pragma omp parallel for
     for(int y=bbminy; y<=bbmaxy; y++){
@@ -229,6 +226,48 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
         int a1 = ay - by;
         int a2 = by - cy;
         int a3 = cy - ay;
+        for(int x=bbminx; x<=bbmaxx; x++){
+            if((Ep1>=0 && Ep2>=0 && Ep3>=0) || (Ep1<=0 && Ep2<=0 && Ep3<=0)){
+                framebuffer.set(x, y, color);
+            }
+            Ep1 += a1;
+            Ep2 += a2;
+            Ep3 += a3;
+        }
+    }
+}
+
+//绘制三角形(扫描线填充，边函数+双方向增量计算)
+void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+
+    // 初始化边函数值，方便后续做增量计算
+    int E1_row = line_function(ax, ay, bx, by, bbminx, bbminy);
+    int E2_row = line_function(bx, by, cx, cy, bbminx, bbminy);
+    int E3_row = line_function(cx, cy, ax, ay, bbminx, bbminy);
+
+    int a1 = ay - by;
+    int a2 = by - cy;
+    int a3 = cy - ay;
+
+    int b1 = bx - ax;
+    int b2 = cx - bx;
+    int b3 = ax - cx;
+
+#pragma omp parallel for
+    for(int y=bbminy; y<=bbmaxy; y++){
+        // 每一行独立初始化，每一行的初始边函数值应该独立计算，不能直接让上一行的变量状态影响下一行
+        int Ep1 = E1_row + (y - bbminy) * b1;
+        int Ep2 = E2_row + (y - bbminy) * b2;
+        int Ep3 = E3_row + (y - bbminy) * b3;
         for(int x=bbminx; x<=bbmaxx; x++){
             if((Ep1>=0 && Ep2>=0 && Ep3>=0) || (Ep1<=0 && Ep2<=0 && Ep3<=0)){
                 framebuffer.set(x, y, color);
