@@ -98,9 +98,9 @@ int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
     return (Bx - Ax) * (y - Ay) - (By - Ay) * (x - Ax);
 }
 
-//计算三角形有向面积
-double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
-    return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
+//计算三角形有向面积(平行四边形，需要除以二，这里没有除是方便其它使用)
+double signed_triangle_area(int x, int y, int bx, int by, int cx, int cy) {
+    return .5*((by-y)*(bx+x) + (cy-by)*(cx+bx) + (y-cy)*(x+cx));
 }
 
 //三个点的叉积计算
@@ -254,10 +254,12 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     int E2_row = line_function(bx, by, cx, cy, bbminx, bbminy);
     int E3_row = line_function(cx, cy, ax, ay, bbminx, bbminy);
 
+    //X方向的增量
     int a1 = ay - by;
     int a2 = by - cy;
     int a3 = cy - ay;
 
+    //Y方向的增量
     int b1 = bx - ax;
     int b2 = cx - bx;
     int b3 = ax - cx;
@@ -297,6 +299,52 @@ void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
             double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
             double beta  = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
             double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
+            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
+//绘制三角形面积，利用重心坐标判断像素是否在三角形内(再修版，增加增量计算提升性能)
+void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    // 利用叉积进行背面剔除
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L<=0) return; // 背面
+    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+
+    double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
+    double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
+    double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
+
+    //X方向的增量
+    double a1 = (by - cy)*.5;
+    double a2 = (cy - ay)*.5;
+    double a3 = (ay - by)*.5;
+
+    //Y方向的增量
+    double b1 = (cx - bx)*.5;
+    double b2 = (ax - cx)*.5;
+    double b3 = (bx - ax)*.5;
+    
+
+#pragma omp parallel for
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        double alpha_init = alpha_area_start + (x - bbminx)*a1;
+        double beta_init = beta_area_start + (x - bbminx)*a2;
+        double gamma_init = gamma_area_start + (x - bbminx)*a3;
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            double alpha = alpha_init / triangle_area;
+            double beta  = beta_init / triangle_area;
+            double gamma = gamma_init / triangle_area;
+            alpha_init += b1;
+            beta_init += b2;
+            gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
             framebuffer.set(x, y, color);
         }
