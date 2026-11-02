@@ -1,6 +1,4 @@
 {
-    // 仅用于 IntelliSense 的头文件索引与语法标准，不参与实际编译
-    // 实际的 include 路径 / 编译选项由 CMakeLists.txt 通过 target_include_directories 决定
     "version": 4,
     "configurations": [
         {
@@ -10,9 +8,7 @@
                 "${workspaceFolder}/src"
             ],
             "defines": [],
-            // 与 build/CMakeCache.txt 里实际使用的编译器保持一致，
-            // 否则 IntelliSense 找不到 GCC 的标准库头文件，会满屏红波浪线
-            "compilerPath": "C:/MinGW-w64/bin/g++.exe",
+            "compilerPath": "C:/mingw32/bin/gcc.exe",
             "intelliSenseMode": "windows-gcc-x64",
             "cppStandard": "c++17",
             "cStandard": "c17"

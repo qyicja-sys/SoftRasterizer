@@ -47,5 +47,6 @@
     "cmake.buildDirectory": "${workspaceFolder}/build",
     // 与 tasks.json 中的 -G 一致，避免 CMake Tools 打开工程时选到默认的 NMake 生成器
     "cmake.generator": "MinGW Makefiles",
-    "cmake.configureOnOpen": true
+    "cmake.configureOnOpen": true,
+    "C_Cpp.default.compilerPath": "C:/mingw32/bin/gcc.exe"
 }
