@@ -3,16 +3,117 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <new>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+
+// ======================= 内存测量：全局分配器记账 =======================
+// 重载全局 operator new / delete，统计每一次 C++ 动态分配：
+//   live        —— 当前还未释放的字节数（用于泄漏检测）
+//   peak        —— 自上次 resetPeak() 以来的峰值字节数（用于峰值统计）
+//   allocations —— 累计分配次数
+// 分配大小写在返回指针前面的 Header 里，delete 时才能精确扣减字节数。
+// 说明：这里只统计本项目经过 C++ new/delete 的分配（std::vector、std::string 等）；
+//       库内部直接 malloc 的分配以及超对齐分配（align_val_t）不计入。
+namespace memtrack {
+
+union Header {
+    std::max_align_t align; // 保证返回指针对齐不低于 max_align_t
+    std::size_t size;       // 记录本次分配的字节数
+};
+
+// 头部按 16 字节取整，保证 new 返回的指针满足默认 new 对齐要求
+constexpr std::size_t kAlignment = 16;
+constexpr std::size_t kHeaderSize =
+    (sizeof(Header) + kAlignment - 1) / kAlignment * kAlignment;
+
+std::atomic<std::size_t> gLive{0};
+std::atomic<std::size_t> gPeak{0};
+std::atomic<std::size_t> gAllocations{0};
+std::atomic<std::size_t> gFrees{0};
+std::atomic<std::size_t> gTotalBytes{0};
+
+void onAllocate(std::size_t size) noexcept {
+    const std::size_t live = gLive.fetch_add(size, std::memory_order_relaxed) + size;
+    gAllocations.fetch_add(1, std::memory_order_relaxed);
+    gTotalBytes.fetch_add(size, std::memory_order_relaxed);
+
+    // 峰值只保留最大值；多线程下用 CAS 重试
+    std::size_t peak = gPeak.load(std::memory_order_relaxed);
+    while (live > peak &&
+           !gPeak.compare_exchange_weak(peak, live, std::memory_order_relaxed)) {
+    }
+}
+
+void onFree(std::size_t size) noexcept {
+    gLive.fetch_sub(size, std::memory_order_relaxed);
+    gFrees.fetch_add(1, std::memory_order_relaxed);
+}
+
+// 把峰值基准重置为当前占用，便于按测试条件分段统计
+void resetPeak() noexcept {
+    gPeak.store(gLive.load(std::memory_order_relaxed), std::memory_order_relaxed);
+}
+
+std::size_t live() noexcept { return gLive.load(std::memory_order_relaxed); }
+std::size_t peak() noexcept { return gPeak.load(std::memory_order_relaxed); }
+std::size_t allocations() noexcept { return gAllocations.load(std::memory_order_relaxed); }
+std::size_t frees() noexcept { return gFrees.load(std::memory_order_relaxed); }
+std::size_t totalBytes() noexcept { return gTotalBytes.load(std::memory_order_relaxed); }
+
+} // namespace memtrack
+
+void *operator new(std::size_t size) {
+    void *raw = std::malloc(size + memtrack::kHeaderSize);
+    if (!raw) throw std::bad_alloc();
+
+    auto *header = static_cast<memtrack::Header *>(raw);
+    header->size = size;
+    memtrack::onAllocate(size);
+    return reinterpret_cast<char *>(raw) + memtrack::kHeaderSize;
+}
+
+void *operator new[](std::size_t size) { return ::operator new(size); }
+
+void operator delete(void *ptr) noexcept {
+    if (!ptr) return;
+
+    void *raw = reinterpret_cast<char *>(ptr) - memtrack::kHeaderSize;
+    auto *header = static_cast<memtrack::Header *>(raw);
+    memtrack::onFree(header->size);
+    std::free(raw);
+}
+
+void operator delete[](void *ptr) noexcept { ::operator delete(ptr); }
+
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
+    void *raw = std::malloc(size + memtrack::kHeaderSize);
+    if (!raw) return nullptr;
+
+    auto *header = static_cast<memtrack::Header *>(raw);
+    header->size = size;
+    memtrack::onAllocate(size);
+    return reinterpret_cast<char *>(raw) + memtrack::kHeaderSize;
+}
+
+void *operator new[](std::size_t size, const std::nothrow_t &) noexcept {
+    return ::operator new(size, std::nothrow_t{});
+}
+
+void operator delete(void *ptr, const std::nothrow_t &) noexcept { ::operator delete(ptr); }
+void operator delete[](void *ptr, const std::nothrow_t &) noexcept { ::operator delete[](ptr); }
 
 // 计时用的颜色固定为红色：避免 std::rand() 等与光栅化算法无关的开销混进计时。
 constexpr TGAColor benchColor = {0, 0, 255, 255};
@@ -68,10 +169,6 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
 
 // 绘制三角形：扫描线填充（自己想的直线方程反函数填充）
 void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    line(ax, ay, bx, by, framebuffer, color);
-    line(bx, by, cx, cy, framebuffer, color);
-    line(cx, cy, ax, ay, framebuffer, color);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L<=0) return; // 背面
@@ -126,7 +223,6 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 
 // 绘制三角形：扫描线填充，采用线性插值
 void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L<=0) return; // 背面
@@ -342,6 +438,17 @@ struct BenchmarkCase {
     int width = 0;
     int height = 0;
     std::string imageName; // 代表图文件名，空则不输出图片
+    std::size_t dataBytes = 0; // 三角形数组本身占用的内存（构建时测得）
+};
+
+// 单个测试条件的内存指标（单位：字节）。
+struct CaseMemoryStats {
+    const char *label = nullptr;   // 指向 group.cases 里的 label，不额外分配字符串
+    std::size_t dataBytes = 0;     // 该条件三角形数组本身占用
+    std::size_t peakBytes = 0;     // 峰值占用 = 数据 + 运行期峰值增量
+    std::size_t averageBytes = 0;  // 平均占用 = 数据 + 运行期采样均值
+    long long leakedBytes = 0;     // 运行期未回收字节，> 0 视为泄漏
+    std::size_t allocations = 0;   // 运行期分配次数
 };
 
 // 一组测试（模型、分辨率、数量、大小、形状）。
@@ -554,6 +661,85 @@ std::vector<BenchTriangle> makeShapeTriangles(ShapeKind kind, std::size_t count,
     return triangles;
 }
 
+// 把字节数格式化成便于阅读的字符串（只用于输出，不参与测量）。
+std::string formatBytes(long long bytes) {
+    char buffer[64];
+    const double magnitude = std::fabs(static_cast<double>(bytes));
+    if (magnitude >= 1024.0 * 1024.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    } else if (magnitude >= 1024.0) {
+        std::snprintf(buffer, sizeof(buffer), "%.2f KB", static_cast<double>(bytes) / 1024.0);
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%lld B", bytes);
+    }
+    return buffer;
+}
+
+// 先记录分配前基线，再用工厂构建三角形数组，把净增量写入 dataBytes。
+template <typename Factory>
+std::vector<BenchTriangle> makeTrianglesTracked(Factory factory, std::size_t &dataBytes) {
+    const std::size_t before = memtrack::live();
+    std::vector<BenchTriangle> triangles = factory();
+    dataBytes = memtrack::live() - before;
+    return triangles;
+}
+
+// 在组末尾打印内存总览：峰值、平均、增长趋势、泄漏、分配次数。
+void printGroupMemorySummary(const BenchmarkGroup &group, const std::vector<CaseMemoryStats> &stats,
+                             long long leakedBytes) {
+    std::cout << "\n-------------------- 内存总览（" << group.title << "） --------------------\n";
+
+    if (stats.empty()) {
+        std::cout << "无条件数据。\n";
+        return;
+    }
+
+    const CaseMemoryStats *peakCase = &stats.front();
+    std::size_t averageSum = 0;
+    std::size_t allocationSum = 0;
+    for (const CaseMemoryStats &stat : stats) {
+        if (stat.peakBytes > peakCase->peakBytes) {
+            peakCase = &stat;
+        }
+        averageSum += stat.averageBytes;
+        allocationSum += stat.allocations;
+    }
+    const std::size_t averageBytes = averageSum / stats.size();
+
+    std::cout << "峰值占用 : " << formatBytes(static_cast<long long>(peakCase->peakBytes))
+              << "（条件：" << peakCase->label << "）\n";
+    std::cout << "平均占用 : " << formatBytes(static_cast<long long>(averageBytes)) << "\n";
+
+    std::cout << "内存增长 : ";
+    if (stats.size() < 2) {
+        std::cout << "单个条件无法比较（峰值 "
+                  << formatBytes(static_cast<long long>(stats.front().peakBytes)) << "）\n";
+    } else {
+        for (std::size_t i = 0; i < stats.size(); ++i) {
+            if (i != 0) std::cout << " -> ";
+            std::cout << stats[i].label << "("
+                      << formatBytes(static_cast<long long>(stats[i].peakBytes)) << ")";
+        }
+        const long long first = static_cast<long long>(stats.front().peakBytes);
+        const long long last = static_cast<long long>(stats.back().peakBytes);
+        const long long delta = last - first;
+        std::cout << "；首末 " << (delta >= 0 ? "+" : "") << formatBytes(delta);
+        if (first > 0) {
+            std::cout << "（约 " << std::fixed << std::setprecision(2)
+                      << static_cast<double>(last) / static_cast<double>(first) << " 倍）";
+        }
+        std::cout << "\n";
+    }
+
+    if (leakedBytes > 0) {
+        std::cout << "内存泄漏 : " << formatBytes(leakedBytes) << "（组内临时对象未完全释放）\n";
+    } else {
+        std::cout << "内存泄漏 : 无（0 B）\n";
+    }
+
+    std::cout << "分配次数 : " << allocationSum << " 次\n";
+}
+
 // 找到 triangle_3 在 benchmark 表里的下标，作为像素校验的基准实现。
 std::size_t findReferenceIndex() {
     for (std::size_t i = 0; i < benchmarks.size(); ++i) {
@@ -564,7 +750,8 @@ std::size_t findReferenceIndex() {
     return 0;
 }
 
-// 运行一整组测试：对组内每个条件，让所有实现各跑 rounds 轮并输出平均值。
+// 运行一整组测试：对组内每个条件，让所有实现各跑 rounds 轮并输出平均值，
+// 同时采集该组的内存占用（峰值 / 平均 / 增长 / 泄漏 / 分配次数）。
 void runBenchmarkGroup(const BenchmarkGroup &group) {
     std::cout << "\n==================== " << group.title << " ====================\n";
     std::cout << "计时轮数 : " << group.rounds << "\n";
@@ -583,105 +770,163 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
 
     bool anyImageFailed = false;
 
+    // 组级内存基线：用于检测“这组测试本身”是否泄漏。
+    // 这里已包含 group.cases 里的三角形数据（它们是调用方构建的、整组常驻，不算泄漏），
+    // 同时让 memoryStats 的固定容量分配发生在基线之前，避免被误判为泄漏。
+    std::vector<CaseMemoryStats> memoryStats;
+    memoryStats.reserve(group.cases.size());
+    const std::size_t groupLiveStart = memtrack::live();
+
     for (const BenchmarkCase &benchmarkCase : group.cases) {
-        TGAImage timingFramebuffer(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+        // 该条件的内存基线：此时三角形数组已在 group 里常驻。
+        const std::size_t caseLiveStart = memtrack::live();
+        const std::size_t caseAllocStart = memtrack::allocations();
+        memtrack::resetPeak();
 
-        // 预热一轮（不计时），让 CPU 频率和缓存进入稳定状态。
-        for (const BenchEntry &entry : benchmarks) {
-            renderAll(benchmarkCase.triangles, timingFramebuffer, entry.fn);
-        }
+        // 运行期采样：渲染过程中记录当前占用，用于求平均。
+        long long sampleSum = 0;
+        std::size_t sampleCount = 0;
+        auto sampleMemory = [&]() {
+            sampleSum += static_cast<long long>(memtrack::live())
+                       - static_cast<long long>(caseLiveStart);
+            ++sampleCount;
+        };
 
-        std::vector<std::vector<double>> samples(
-            benchmarks.size(), std::vector<double>(static_cast<std::size_t>(group.rounds)));
+        {
+            TGAImage timingFramebuffer(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+            sampleMemory(); // 帧缓冲已分配，作为该条件的第一个采样点
 
-        for (int round = 0; round < group.rounds; ++round) {
-            // 奇偶轮交换执行顺序，避免固定顺序带来的缓存 / 频率偏差。
-            for (std::size_t step = 0; step < benchmarks.size(); ++step) {
-                const std::size_t index = (round % 2 == 0) ? step : (benchmarks.size() - 1 - step);
-                samples[index][round] =
-                    renderAllTimed(benchmarkCase.triangles, timingFramebuffer, benchmarks[index].fn);
+            // 预热一轮（不计时），让 CPU 频率和缓存进入稳定状态。
+            for (const BenchEntry &entry : benchmarks) {
+                renderAll(benchmarkCase.triangles, timingFramebuffer, entry.fn);
             }
+            sampleMemory();
+
+            std::vector<std::vector<double>> samples(
+                benchmarks.size(), std::vector<double>(static_cast<std::size_t>(group.rounds)));
+
+            for (int round = 0; round < group.rounds; ++round) {
+                // 奇偶轮交换执行顺序，避免固定顺序带来的缓存 / 频率偏差。
+                for (std::size_t step = 0; step < benchmarks.size(); ++step) {
+                    const std::size_t index = (round % 2 == 0) ? step : (benchmarks.size() - 1 - step);
+                    samples[index][round] =
+                        renderAllTimed(benchmarkCase.triangles, timingFramebuffer, benchmarks[index].fn);
+                    sampleMemory(); // 每种实现的每一轮都采一次
+                }
+
+                if (group.verbose) {
+                    std::cout << std::setw(4) << (round + 1);
+                    for (std::size_t index = 0; index < benchmarks.size(); ++index) {
+                        std::cout << std::setw(16) << std::fixed << std::setprecision(2) << samples[index][round];
+                    }
+                    std::cout << "\n";
+                }
+            }
+
+            std::vector<TimingStats> stats;
+            stats.reserve(benchmarks.size());
+            for (const std::vector<double> &functionSamples : samples) {
+                stats.push_back(summarize(functionSamples));
+            }
+
+            std::size_t fastestIndex = 0;
+            for (std::size_t i = 1; i < stats.size(); ++i) {
+                if (stats[i].average < stats[fastestIndex].average) {
+                    fastestIndex = i;
+                }
+            }
+
+            std::cout << std::left << std::setw(16) << benchmarkCase.label << std::right;
+            for (const TimingStats &stat : stats) {
+                std::cout << std::setw(16) << std::fixed << std::setprecision(2) << stat.average;
+            }
+            std::cout << "\n";
 
             if (group.verbose) {
-                std::cout << std::setw(4) << (round + 1);
-                for (std::size_t index = 0; index < benchmarks.size(); ++index) {
-                    std::cout << std::setw(16) << std::fixed << std::setprecision(2) << samples[index][round];
+                std::cout << "\n函数           平均(ms)     最快(ms)     最慢(ms)     相对最快(倍数)\n";
+                for (std::size_t i = 0; i < stats.size(); ++i) {
+                    std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
+                              << std::setw(13) << stats[i].average
+                              << std::setw(13) << stats[i].minimum
+                              << std::setw(13) << stats[i].maximum
+                              << std::setw(16) << (stats[i].average / stats[fastestIndex].average) << "\n";
                 }
-                std::cout << "\n";
             }
-        }
 
-        std::vector<TimingStats> stats;
-        stats.reserve(benchmarks.size());
-        for (const std::vector<double> &functionSamples : samples) {
-            stats.push_back(summarize(functionSamples));
-        }
+            std::cout << "  最快: " << benchmarks[fastestIndex].name
+                      << "（平均 " << stats[fastestIndex].average << " ms）\n";
 
-        std::size_t fastestIndex = 0;
-        for (std::size_t i = 1; i < stats.size(); ++i) {
-            if (stats[i].average < stats[fastestIndex].average) {
-                fastestIndex = i;
-            }
-        }
+            if (group.checked) {
+                // 模型组：以 triangle_3 为基准做像素校验，并保存每个实现的输出图。
+                const std::size_t referenceIndex = findReferenceIndex();
+                TGAImage reference(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                renderAll(benchmarkCase.triangles, reference, benchmarks[referenceIndex].fn);
+                sampleMemory(); // 基准图已分配
 
-        std::cout << std::left << std::setw(16) << benchmarkCase.label << std::right;
-        for (const TimingStats &stat : stats) {
-            std::cout << std::setw(16) << std::fixed << std::setprecision(2) << stat.average;
-        }
-        std::cout << "\n";
+                std::cout << "\n像素校验（基准 = triangle_3）\n";
+                std::cout << "注：所有实现都带背面剔除；差异来自填充边界取整不同"
+                             "（triangle_1 用闭区间、triangle_2 用半开区间）以及"
+                             "triangle_1 会跳过交点数量不为 2 的扫描行，属于预期行为。\n";
+                std::cout << "函数           非黑像素     与基准不同像素\n";
 
-        if (group.verbose) {
-            std::cout << "\n函数           平均(ms)     最快(ms)     最慢(ms)     相对最快(倍数)\n";
-            for (std::size_t i = 0; i < stats.size(); ++i) {
-                std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
-                          << std::setw(13) << stats[i].average
-                          << std::setw(13) << stats[i].minimum
-                          << std::setw(13) << stats[i].maximum
-                          << std::setw(16) << (stats[i].average / stats[fastestIndex].average) << "\n";
-            }
-        }
+                for (std::size_t i = 0; i < benchmarks.size(); ++i) {
+                    TGAImage generated;
+                    const TGAImage *image = &reference;
+                    if (i != referenceIndex) {
+                        generated = TGAImage(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                        renderAll(benchmarkCase.triangles, generated, benchmarks[i].fn);
+                        image = &generated;
+                    }
 
-        std::cout << "  最快: " << benchmarks[fastestIndex].name
-                  << "（平均 " << stats[fastestIndex].average << " ms）\n";
+                    const PixelCheck check = checkAgainstReference(*image, reference);
+                    std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
+                              << std::setw(13) << check.nonBlack
+                              << std::setw(18) << check.differentFromReference << "\n";
 
-        if (group.checked) {
-            // 模型组：以 triangle_3 为基准做像素校验，并保存每个实现的输出图。
-            const std::size_t referenceIndex = findReferenceIndex();
-            TGAImage reference(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
-            renderAll(benchmarkCase.triangles, reference, benchmarks[referenceIndex].fn);
-
-            std::cout << "\n像素校验（基准 = triangle_3）\n";
-            std::cout << "注：所有实现都带背面剔除；triangle_1 先描边再剔除，"
-                         "triangle_2 只做填充，因此差异属于预期行为。\n";
-            std::cout << "函数           非黑像素     与基准不同像素\n";
-
-            for (std::size_t i = 0; i < benchmarks.size(); ++i) {
-                TGAImage generated;
-                const TGAImage *image = &reference;
-                if (i != referenceIndex) {
-                    generated = TGAImage(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
-                    renderAll(benchmarkCase.triangles, generated, benchmarks[i].fn);
-                    image = &generated;
+                    const std::string imagePath =
+                        (std::filesystem::path(group.outputDir) / ("bench_" + std::string(benchmarks[i].name) + ".tga")).string();
+                    anyImageFailed = !image->write_tga_file(imagePath, false) || anyImageFailed;
                 }
-
-                const PixelCheck check = checkAgainstReference(*image, reference);
-                std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
-                          << std::setw(13) << check.nonBlack
-                          << std::setw(18) << check.differentFromReference << "\n";
+                sampleMemory(); // 基准图 + 当前实现图的峰值时刻
+            } else if (!benchmarkCase.imageName.empty()) {
+                // 其它组只输出 triangle_3 的代表图，用于肉眼确认该条件下的几何覆盖情况。
+                TGAImage image(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                renderAll(benchmarkCase.triangles, image, triangle_3);
+                sampleMemory(); // 代表图已分配
 
                 const std::string imagePath =
-                    (std::filesystem::path(group.outputDir) / ("bench_" + std::string(benchmarks[i].name) + ".tga")).string();
-                anyImageFailed = !image->write_tga_file(imagePath, false) || anyImageFailed;
+                    (std::filesystem::path(group.outputDir) / benchmarkCase.imageName).string();
+                anyImageFailed = !image.write_tga_file(imagePath, false) || anyImageFailed;
             }
-        } else if (!benchmarkCase.imageName.empty()) {
-            // 其它组只输出 triangle_3 的代表图，用于肉眼确认该条件下的几何覆盖情况。
-            TGAImage image(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
-            renderAll(benchmarkCase.triangles, image, triangle_3);
-
-            const std::string imagePath =
-                (std::filesystem::path(group.outputDir) / benchmarkCase.imageName).string();
-            anyImageFailed = !image.write_tga_file(imagePath, false) || anyImageFailed;
         }
+        // 作用域结束：帧缓冲、校验图片等临时对象都已析构。
+        // 此时与 caseLiveStart 的差值就是这段测试新增的未释放内存（正常应为 0）。
+        const long long caseLiveEnd = static_cast<long long>(memtrack::live());
+        const long long caseLiveStartSigned = static_cast<long long>(caseLiveStart);
+        const long long leakedBytes = caseLiveEnd - caseLiveStartSigned;
+
+        const std::size_t peakAbsolute = memtrack::peak();
+        const std::size_t peakDelta =
+            peakAbsolute > caseLiveStart ? peakAbsolute - caseLiveStart : 0;
+        const std::size_t averageDelta = sampleCount == 0
+            ? 0
+            : static_cast<std::size_t>(std::max<long long>(
+                  0, sampleSum / static_cast<long long>(sampleCount)));
+
+        CaseMemoryStats memoryStat;
+        memoryStat.label = benchmarkCase.label.c_str();
+        memoryStat.dataBytes = benchmarkCase.dataBytes;
+        memoryStat.peakBytes = benchmarkCase.dataBytes + peakDelta;
+        memoryStat.averageBytes = benchmarkCase.dataBytes + averageDelta;
+        memoryStat.leakedBytes = leakedBytes;
+        memoryStat.allocations = memtrack::allocations() - caseAllocStart;
+        memoryStats.push_back(memoryStat);
+
+        std::cout << "  内存: 峰值 " << formatBytes(static_cast<long long>(memoryStat.peakBytes))
+                  << " | 平均 " << formatBytes(static_cast<long long>(memoryStat.averageBytes))
+                  << "（数据 " << formatBytes(static_cast<long long>(memoryStat.dataBytes)) << "）"
+                  << " | 泄漏 " << (leakedBytes > 0 ? formatBytes(leakedBytes) : std::string("无"))
+                  << " | 分配 " << memoryStat.allocations << " 次\n";
     }
 
     if (!anyImageFailed) {
@@ -689,6 +934,11 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
     } else {
         std::cerr << "部分结果图片写出失败（当前工作目录可能不可写）\n";
     }
+
+    // 组级泄漏：所有条件的临时对象已释放，与进入条件循环前的占用对比。
+    const long long groupLeaked = static_cast<long long>(memtrack::live())
+                                - static_cast<long long>(groupLiveStart);
+    printGroupMemorySummary(group, memoryStats, groupLeaked);
 }
 
 // 模型路径兜底：既支持在仓库根目录运行，也支持在 build/bin 下直接运行。
@@ -755,7 +1005,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const std::vector<BenchTriangle> modelTriangles = buildTriangles(model, size, size);
+    std::size_t modelBytes = 0;
+    std::vector<BenchTriangle> modelTriangles =
+        makeTrianglesTracked([&] { return buildTriangles(model, size, size); }, modelBytes);
     const int derivedRounds = std::max(3, rounds / 20);
 
     std::cout << "====================== 三角形光栅化性能测试 ======================\n";
@@ -764,6 +1016,7 @@ int main(int argc, char **argv) {
     std::cout << "基准画布 : " << size << " x " << size << "\n";
     std::cout << "模型轮数 : " << rounds << "，派生测试轮数 : " << derivedRounds << "\n";
     std::cout << "测速对象 : triangle_1, triangle_2, triangle_3_1, triangle_3, triangle_4, triangle_5\n";
+    std::cout << "内存统计 : 全局 new/delete 记账（峰值 / 平均 / 增长 / 泄漏 / 分配次数）\n";
 #ifdef _OPENMP
     std::cout << "OpenMP   : 已启用\n";
 #else
@@ -778,7 +1031,7 @@ int main(int argc, char **argv) {
     modelGroup.rounds = rounds;
     modelGroup.verbose = true;
     modelGroup.checked = true;
-    modelGroup.cases.push_back({"diablo3_pose", modelTriangles, size, size, ""});
+    modelGroup.cases.push_back({"diablo3_pose", std::move(modelTriangles), size, size, "", modelBytes});
     runBenchmarkGroup(modelGroup);
 
     // 2. 分辨率测试：同一模型，画布从 1/4 到 2 倍基准尺寸。
@@ -797,8 +1050,11 @@ int main(int argc, char **argv) {
     for (int resolution : resolutions) {
         const std::string label = std::to_string(resolution) + " x " + std::to_string(resolution);
         const std::string imageName = "res_" + std::to_string(resolution) + ".tga";
+        std::size_t dataBytes = 0;
+        auto triangles = makeTrianglesTracked(
+            [&] { return buildTriangles(model, resolution, resolution); }, dataBytes);
         resolutionGroup.cases.push_back(
-            {label, buildTriangles(model, resolution, resolution), resolution, resolution, imageName});
+            {label, std::move(triangles), resolution, resolution, imageName, dataBytes});
     }
     runBenchmarkGroup(resolutionGroup);
 
@@ -812,13 +1068,14 @@ int main(int argc, char **argv) {
                               static_cast<std::size_t>(10000)}) {
         const std::string label = std::to_string(count) + " 个";
         const std::string imageName = "count_" + std::to_string(count) + ".tga";
-        countGroup.cases.push_back({
-            label,
-            makeRandomTriangles(count, 6, 12, size, size, static_cast<unsigned>(2024 + count)),
-            size,
-            size,
-            imageName
-        });
+        std::size_t dataBytes = 0;
+        auto triangles = makeTrianglesTracked(
+            [&] {
+                return makeRandomTriangles(count, 6, 12, size, size,
+                                           static_cast<unsigned>(2024 + count));
+            },
+            dataBytes);
+        countGroup.cases.push_back({label, std::move(triangles), size, size, imageName, dataBytes});
     }
     runBenchmarkGroup(countGroup);
 
@@ -840,14 +1097,15 @@ int main(int argc, char **argv) {
         {"大", "size_large.tga", 48, 96},
     };
     for (const SizeSpec &spec : sizeSpecs) {
-        sizeGroup.cases.push_back({
-            spec.label,
-            makeRandomTriangles(200, spec.radiusMin, spec.radiusMax, size, size,
-                                static_cast<unsigned>(3000 + spec.radiusMin)),
-            size,
-            size,
-            spec.imageName
-        });
+        std::size_t dataBytes = 0;
+        auto triangles = makeTrianglesTracked(
+            [&] {
+                return makeRandomTriangles(200, spec.radiusMin, spec.radiusMax, size, size,
+                                           static_cast<unsigned>(3000 + spec.radiusMin));
+            },
+            dataBytes);
+        sizeGroup.cases.push_back(
+            {spec.label, std::move(triangles), size, size, spec.imageName, dataBytes});
     }
     runBenchmarkGroup(sizeGroup);
 
@@ -869,14 +1127,15 @@ int main(int argc, char **argv) {
         {ShapeKind::Degenerate,  "退化", "shape_degenerate.tga",  20000},
     };
     for (const ShapeSpec &spec : shapeSpecs) {
-        shapeGroup.cases.push_back({
-            spec.label,
-            makeShapeTriangles(spec.kind, spec.count, size, size,
-                               static_cast<unsigned>(4000 + static_cast<int>(spec.kind))),
-            size,
-            size,
-            spec.imageName
-        });
+        std::size_t dataBytes = 0;
+        auto triangles = makeTrianglesTracked(
+            [&] {
+                return makeShapeTriangles(spec.kind, spec.count, size, size,
+                                          static_cast<unsigned>(4000 + static_cast<int>(spec.kind)));
+            },
+            dataBytes);
+        shapeGroup.cases.push_back(
+            {spec.label, std::move(triangles), size, size, spec.imageName, dataBytes});
     }
     runBenchmarkGroup(shapeGroup);
 
