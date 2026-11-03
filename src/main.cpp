@@ -345,23 +345,53 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     }
 }
 
-void triangle_6_interpolation(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage &framebuffer) {
+//顶点颜色属性插值渲染
+void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAColor aColor, TGAColor bColor, TGAColor cColor, TGAImage &framebuffer) {
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
     int bbmaxy = std::max(std::max(ay, by), cy);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+
+    double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
+    double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
+    double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
+
+    //X方向的增量
+    double a1 = (by - cy)*.5;
+    double a2 = (cy - ay)*.5;
+    double a3 = (ay - by)*.5;
+
+    //Y方向的增量
+    double b1 = (cx - bx)*.5;
+    double b2 = (ax - cx)*.5;
+    double b3 = (bx - ax)*.5;
+    
 
 #pragma omp parallel for
     for (int x=bbminx; x<=bbmaxx; x++) {
+        double alpha_init = alpha_area_start + (x - bbminx)*a1;
+        double beta_init = beta_area_start + (x - bbminx)*a2;
+        double gamma_init = gamma_area_start + (x - bbminx)*a3;
         for (int y=bbminy; y<=bbmaxy; y++) {
-            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-            double beta  = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-            double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
+            double alpha = alpha_init / triangle_area;
+            double beta  = beta_init / triangle_area;
+            double gamma = gamma_init / triangle_area;
+            alpha_init += b1;
+            beta_init += b2;
+            gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
             unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
-            TGAColor color = {static_cast<int>(alpha * 255), static_cast<int>(beta * 255), static_cast<int>(gamma * 255)};
+            TGAColor color;
+
+            for (int i = 0; i < 3; i++) {
+                color[i] = static_cast<uint8_t>(std::round(
+                    aColor[i] * alpha +
+                    bColor[i] * beta +
+                    cColor[i] * gamma
+                ));
+            }
+            color[3] = static_cast<uint8_t>(255);
             framebuffer.set(x, y, color);
         }
     }
@@ -435,14 +465,16 @@ int main(int argc, char** argv){
                 // =============================================================
                 float x = (nowVec.x + 1) * (width  / 2.f);
                 float y = (1 - nowVec.y) * (height / 2.f);
-                screenVert newVec(static_cast<int>(x), static_cast<int>(y), nowVec.z);
+                float z = (nowVec.z+1)/2.f;
+                screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
                 face.push_back(newVec);
             }
 
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
-            for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-                triangle_1(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
+            //for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+            //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
+            triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
 
         // 输出 TGA。第二个参数 vflip 必须显式传 false：
