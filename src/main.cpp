@@ -111,11 +111,6 @@ int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
 //绘制三角形
 //扫描线填充(我自己想的直线方程反函数填充，可以优化)
 void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    line(ax, ay, bx, by, framebuffer, color);
-    line(bx, by, cx, cy, framebuffer, color);
-    line(cx, cy, ax, ay, framebuffer, color);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L<=0) return; // 背面
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
@@ -173,7 +168,6 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 
 //绘制三角形(扫描线填充，采用线性插值)
 void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L<=0) return; // 背面
@@ -426,7 +420,7 @@ int main(int argc, char** argv){
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-                triangle_4(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
+                triangle_1(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
         }
 
         // 输出 TGA。第二个参数 vflip 必须显式传 false：
