@@ -381,7 +381,7 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
             beta_init += b2;
             gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            //unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
             TGAColor color;
 
             for (int i = 0; i < 3; i++) {
@@ -393,6 +393,47 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
             }
             color[3] = static_cast<uint8_t>(255);
             framebuffer.set(x, y, color);
+        }
+    }
+}
+
+void triangle_6_depthMap(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAImage &framebuffer) {
+    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
+    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
+    int bbmaxx = std::max(std::max(ax, bx), cx);
+    int bbmaxy = std::max(std::max(ay, by), cy);
+
+    double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
+    double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
+    double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
+
+    //X方向的增量
+    double a1 = (by - cy)*.5;
+    double a2 = (cy - ay)*.5;
+    double a3 = (ay - by)*.5;
+
+    //Y方向的增量
+    double b1 = (cx - bx)*.5;
+    double b2 = (ax - cx)*.5;
+    double b3 = (bx - ax)*.5;
+    
+
+#pragma omp parallel for
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        double alpha_init = alpha_area_start + (x - bbminx)*a1;
+        double beta_init = beta_area_start + (x - bbminx)*a2;
+        double gamma_init = gamma_area_start + (x - bbminx)*a3;
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            double alpha = alpha_init / triangle_area;
+            double beta  = beta_init / triangle_area;
+            double gamma = gamma_init / triangle_area;
+            alpha_init += b1;
+            beta_init += b2;
+            gamma_init += b3;
+            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            framebuffer.set(x, y, {z});
         }
     }
 }
