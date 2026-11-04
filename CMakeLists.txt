@@ -29,6 +29,7 @@ target_include_directories(softrasterizer_core PUBLIC ${PROJECT_SOURCE_DIR}/incl
 add_executable(SoftRasterizer
     src/main.cpp           # 程序入口
     src/model.cpp
+    src/zbuffer.cpp        # 深度缓冲实现（main.cpp 里的 ZBuffer 全局对象依赖它）
 )
 
 # 7. 为可执行文件指定私有头文件路径
