@@ -7,6 +7,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <utility>
+#include "zbuffer.h"
 
 // TGAColor 的通道类型是 std::uint8_t，取值范围 0~255。
 // 写成 256 属于常量表达式中的窄化转换（ill-formed），会直接编译失败。
@@ -15,6 +16,18 @@ constexpr TGAColor green  = {  0, 255,   0, 255};
 constexpr TGAColor red    = {  0,   0, 255, 255};
 constexpr TGAColor blue   = {255, 128,  64, 255};
 constexpr TGAColor yellow = {  0, 200, 255, 255};
+
+// 画布（帧缓冲）尺寸：800×800 像素。
+// 下面的坐标映射会用到 width/2 和 height/2，改分辨率只需要改这两个常量。
+constexpr int width  = 1024;
+constexpr int height = 1024;
+ZBuffer zBuffer(width, height);
+
+std::tuple<int,int,int> project(Vec3 v) { // 首先，(x,y) 是向量 (x,y,z) 的正交投影。
+    return { (v.x + 1.) *  width/2,       // 其次，由于输入模型已经缩放到适合放在 [-1,1]^3 的世界坐标中，
+             (1.-v.y) * height/2,       // 我们希望先平移向量 (x,y)，再缩放它使其铺满整个屏幕。
+             (1.-v.z) *   255./2 };
+}
 
 //按重心坐标((1-t),t)权重，来进行绘制，由近到远(A-B)
 void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
@@ -300,11 +313,13 @@ void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 }
 
 //绘制三角形面积，利用重心坐标判断像素是否在三角形内(再修版，增加增量计算提升性能)
-void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // 利用叉积进行背面剔除
+void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, float az, float bz, float cz, TGAImage &framebuffer, TGAColor color) {
+    // 利用叉积进行背面剔除。
+    // 注意：屏幕坐标的 y 轴向下，投影时用了 (1 - v.y) 把模型 y 翻转过来，
+    // 这个镜像变换会把三角形绕序整体反号（模型空间逆时针的正面，到屏幕上变成顺时针）。
+    // 所以这里要保留叉积为负的面，叉积为正的反而是背面，不能再沿用原来的 L<=0。
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
-    // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+    if(L <= 0) return; // 背面（屏幕空间顺时针）
 
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
@@ -340,6 +355,8 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
             beta_init += b2;
             gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            if(!zBuffer.testAndSet(x, y, z)) continue;
             framebuffer.set(x, y, color);
         }
     }
@@ -347,6 +364,8 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 
 //顶点颜色属性插值渲染
 void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAColor aColor, TGAColor bColor, TGAColor cColor, TGAImage &framebuffer) {
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
@@ -397,7 +416,10 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
     }
 }
 
-void triangle_6_depthMap(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAImage &framebuffer) {
+void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, float az, float bz, float cz, TGAImage &framebuffer) {
+    // int L = cross_product(ax, ay, bx, by, cx, cy);
+    // if(L <= 0) return; // 背面（屏幕空间顺时针）
+
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
@@ -433,26 +455,26 @@ void triangle_6_depthMap(int ax, int ay, int bx, int by, int cx, int cy, int az,
             gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
             unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            if(!zBuffer.testAndSet(x, y, z)){
+                continue;
+            }
             framebuffer.set(x, y, {z});
         }
     }
 }
 
 int main(int argc, char** argv){
-        // 画布（帧缓冲）尺寸：800×800 像素。
-    // 下面的坐标映射会用到 width/2 和 height/2，改分辨率只需要改这两个常量。
-    constexpr int width  = 1024;
-    constexpr int height = 1024;
-
     // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
     // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
     TGAImage framebuffer(width, height, TGAImage::RGB);
+    TGAImage zMap(width, height, TGAImage::GRAYSCALE);
+    zBuffer.clear();
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
     Model newModel;
-    bool flag = newModel.load("obj/african_head.obj");
+    bool flag = newModel.load("obj/diablo3_pose.obj");
     if(flag){
         // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
         Vec3 firstVect = newModel.vert(0);
@@ -504,18 +526,17 @@ int main(int argc, char** argv){
                 // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
                 // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
                 // =============================================================
-                float x = (nowVec.x + 1) * (width  / 2.f);
-                float y = (1 - nowVec.y) * (height / 2.f);
-                float z = (nowVec.z+1)/2.f;
+                auto [x, y, z] = project(nowVec);
                 screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
                 face.push_back(newVec);
             }
 
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
-            //for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-            //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
-            triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
+            for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+            // triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
+            triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
+            //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
 
         // 输出 TGA。第二个参数 vflip 必须显式传 false：
@@ -524,6 +545,8 @@ int main(int argc, char** argv){
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
         framebuffer.write_tga_file("out/framebuffer.tga", false);
+        zMap.write_tga_file("out/zMap.tga", false);
+        zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
     }
