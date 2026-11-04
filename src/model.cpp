@@ -20,10 +20,14 @@ const std::array<int,3>& Model::face(int i) const{
     return faceList.at(i);
 }
 
+int Model::faceIndex(int i) const{
+    return painterOrder.at(i);
+}
+
 bool Model::load(const std::string& filename){
     //1.创建file对象并打开
     std::ifstream file(filename);
-    vecList.clear();faceList.clear();//防止重复加载时数据叠加
+    vecList.clear();faceList.clear();painterOrder.clear();//防止重复加载时数据叠加
 
     //2.检查是否打开
     if (!file.is_open()) {
@@ -99,6 +103,27 @@ bool Model::load(const std::string& filename){
             }
         }
     }
+
+    // 画家算法：把三角形按深度从远到近排序，先画远的、后画近的，让近处覆盖远处。
+    // idx[i] = 画家顺序下第 i 个面在 faceList 中的原始下标。
+    std::vector<int> idx(nfaces());    // 置换，即从新索引到旧三角形索引的映射
+    for (int i = 0 ; i<nfaces() ; i++) // 从恒等置换开始
+        idx[i] = i;
+
+    // 排序键取三角形三个顶点 z 的算术平均（质心 z）：模型空间 z 越大越靠近观察者，
+    // 所以质心 z 越小表示这块面整体越远，应当先画。
+    // 注意：本项目没有 tinyrenderer 的 facet_vrt 展开数组，
+    // 要先用 face(f) 拿到面的 3 个顶点下标，再用 vert() 取坐标。
+    auto centroid_z = [&](int f) {
+        const std::array<int,3>& tri = face(f);
+        return (vert(tri[0]).z + vert(tri[1]).z + vert(tri[2]).z) / 3.f;
+    };
+    std::sort(idx.begin(), idx.end(),
+              [&](int a, int b) {
+                  return centroid_z(a) < centroid_z(b);
+              });
+
+    painterOrder = idx;                     // 存放排好序的面下标（新索引 -> 旧面索引）
 
     // 4. 文件会在 ifstream 析构时自动关闭，这里的 close 只是显式说明。
     file.close();

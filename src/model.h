@@ -29,6 +29,9 @@ class Model{
     std::vector<Vec3> vecList;
     // 所有三角形面，每个元素存 3 个顶点下标（已从 OBJ 的 1-based 转成 0-based）
     std::vector<std::array<int,3>> faceList;
+    // 画家算法排序结果：painterOrder[i] 表示“第 i 个该绘制的面”在 faceList 中的下标。
+    // 排序键是三角形三个顶点的质心 z，从小到大（远 → 近）。
+    std::vector<int> painterOrder;
 
     public:
         // 解析 OBJ 文件；打不开、格式错误或索引越界都返回 false
@@ -40,4 +43,6 @@ class Model{
         // 按下标取顶点 / 面。内部用 vector::at，越界会抛 std::out_of_range。
         const Vec3& vert(int i) const;
         const std::array<int,3>& face(int i) const;
+        // 取画家顺序下第 i 个面的原始面下标；i 越界会抛 std::out_of_range
+        int faceIndex(int i) const;
 };

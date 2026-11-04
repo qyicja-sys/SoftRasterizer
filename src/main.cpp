@@ -368,16 +368,42 @@ void triangle_6_interpolation(int ax, int ay, int az, int bx, int by, int bz, in
 }
 
 int main(int argc, char** argv){
-    constexpr int width  = 64;
-    constexpr int height = 64;
+    constexpr int width  = 1024;
+    constexpr int height = 1024;
+
     TGAImage framebuffer(width, height, TGAImage::RGB);
 
-    int ax = 17, ay =  4, az =  13;
-    int bx = 55, by = 39, bz = 128;
-    int cx = 23, cy = 59, cz = 255;
+    Model newModel;
+    bool flag = newModel.load("obj/diablo3_pose.obj");
+    if(flag){
+        // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
+        Vec3 firstVect = newModel.vert(0);
+        std::cout << "第一个顶点：" << firstVect.x << " " << firstVect.y <<  " " << firstVect.z << std::endl;
+        for(int i=0;i<newModel.nfaces();i++){
+            // 画家算法：i 是绘制顺序，faceIndex(i) 才是该面的原始下标
+            const int faceIdx = newModel.faceIndex(i);
+            const std::array<int,3> modelFace = newModel.face(faceIdx);// 第 faceIdx 个面的 3 个顶点下标
+            std::vector<screenVert> face;
+            face.reserve(3);
 
-    triangle_6_interpolation(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer);
+            // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
+            for(int j = 0;j<3;j++){
+                Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
+                float x = (nowVec.x + 1) * (width  / 2.f);
+                float y = (1 - nowVec.y) * (height / 2.f);
+                float z = (nowVec.z+1)/2.f;
+                screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
+                face.push_back(newVec);
+            }
+            TGAColor rnd;
+            for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+            triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, framebuffer, rnd);
+            //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
+        }
+        framebuffer.write_tga_file("out/framebuffer.tga", false);
+    }else{
+        std::cerr << "模型加载失败" << std::endl;
+    }
 
-    framebuffer.write_tga_file("out/framebuffer.tga");
     return 0;
 }
