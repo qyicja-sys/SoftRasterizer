@@ -526,7 +526,7 @@ int main(int argc, char** argv){
                 // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
                 // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
                 // =============================================================
-                auto [x, y, z] = project(nowVec);
+                auto [x, y, z] = project(rotY(nowVec,60));
                 screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
                 face.push_back(newVec);
             }
@@ -545,7 +545,7 @@ int main(int argc, char** argv){
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
         //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
+        zMap.write_tga_file("out/diablo3_pose_depth_rotY.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
