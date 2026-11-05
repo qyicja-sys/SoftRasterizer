@@ -125,7 +125,7 @@ int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
 //扫描线填充(我自己想的直线方程反函数填充，可以优化)
 void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+    if(L > 0) return; // 背面（屏幕空间顺时针） 
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
     int min_y = std::min({ay, by, cy});
@@ -183,7 +183,7 @@ void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+    if(L > 0) return; // 背面（屏幕空间顺时针） 
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
     // 按 y 坐标升序排列顶点 a、b、c（冒泡排序，好耶！）
@@ -221,7 +221,7 @@ void triangle_3_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &fram
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+    if(L > 0) return; // 背面（屏幕空间顺时针） 
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
 #pragma omp parallel for
@@ -253,7 +253,7 @@ void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+    if(L > 0) return; // 背面（屏幕空间顺时针）
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
     // 初始化边函数值，方便后续做增量计算
@@ -297,7 +297,7 @@ void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     // 利用叉积进行背面剔除
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+    if(L > 0) return; // 背面（屏幕空间顺时针）
     // if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
 
 #pragma omp parallel for
@@ -319,7 +319,7 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, float az, float 
     // 这个镜像变换会把三角形绕序整体反号（模型空间逆时针的正面，到屏幕上变成顺时针）。
     // 所以这里要保留叉积为负的面，叉积为正的反而是背面，不能再沿用原来的 L<=0。
     int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L <= 0) return; // 背面（屏幕空间顺时针）
+    if(L > 0) return; // 背面（屏幕空间顺时针）
 
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
@@ -364,8 +364,8 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, float az, float 
 
 //顶点颜色属性插值渲染
 void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAColor aColor, TGAColor bColor, TGAColor cColor, TGAImage &framebuffer) {
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    if (total_area<1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L > 0) return; // 背面（屏幕空间顺时针）
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
@@ -417,8 +417,8 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
 }
 
 void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, float az, float bz, float cz, TGAImage &framebuffer) {
-    // int L = cross_product(ax, ay, bx, by, cx, cy);
-    // if(L <= 0) return; // 背面（屏幕空间顺时针）
+    int L = cross_product(ax, ay, bx, by, cx, cy);
+    if(L > 0) return; // 背面（屏幕空间顺时针）
 
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
@@ -458,7 +458,7 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
             if(!zBuffer.testAndSet(x, y, z)){
                 continue;
             }
-            framebuffer.set(x, y, {z});
+            framebuffer.set(x, y, {static_cast<uint8_t>(1-z)});
         }
     }
 }
@@ -534,7 +534,7 @@ int main(int argc, char** argv){
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-            // triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
+            //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
             triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
             //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
@@ -544,8 +544,8 @@ int main(int argc, char** argv){
         // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        framebuffer.write_tga_file("out/framebuffer.tga", false);
-        zMap.write_tga_file("out/zMap.tga", false);
+        //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
+        zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
