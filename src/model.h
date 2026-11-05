@@ -2,16 +2,10 @@
 #include <vector>
 #include <string>
 #include <array>
+#include <cmath>
+#include "Vec.h"
 
-// 模型空间中的三维点：x、y、z 对应 OBJ 文件 v 行的三个数。
-// 本轮只做线框，z 暂时不参与绘制，但先原样保留，后面做深度测试要用。
-struct Vec3{
-    float x;
-    float y;
-    float z;
 
-    Vec3(float x,float y, float z) : x(x), y(y), z(z) {}
-};
 
 // 完成“模型空间 -> 屏幕空间”映射后的顶点。
 // x、y 是像素坐标（整数）；z 仍是模型空间的深度值，留到 z-buffer 阶段使用。
