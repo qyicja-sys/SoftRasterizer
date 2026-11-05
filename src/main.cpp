@@ -346,6 +346,7 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &frameb
 }
 
 void triangle_6_interpolation(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage &framebuffer) {
+    double threshold = 0.2;
     int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
     int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
     int bbmaxx = std::max(std::max(ax, bx), cx);
@@ -360,9 +361,11 @@ void triangle_6_interpolation(int ax, int ay, int az, int bx, int by, int bz, in
             double beta  = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
             double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
-            TGAColor color = {static_cast<int>(alpha * 255), static_cast<int>(beta * 255), static_cast<int>(gamma * 255)};
-            framebuffer.set(x, y, color);
+            if (alpha<threshold || beta<threshold || gamma<threshold){
+                //unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+                TGAColor color = {static_cast<uint8_t>(alpha * 255), static_cast<uint8_t>(beta * 255), static_cast<uint8_t>(gamma * 255)};
+                framebuffer.set(x, y, color);
+            } 
         }
     }
 }
