@@ -29,6 +29,14 @@ std::tuple<int,int,int> project(Vec3 v) { // 首先，(x,y) 是向量 (x,y,z) �
              (1.-v.z) *   255./2 };
 }
 
+std::tuple<float,float,float> project_camera(Vec3 v, double focalLength) { 
+    if(v.z <= 0)
+        return std::tuple<float,float,float>();
+    return { v.x * focalLength / v.z+width/2,      
+             height/2-v.y * focalLength / v.z,       
+             v.z };
+}
+
 //按重心坐标((1-t),t)权重，来进行绘制，由近到远(A-B)
 void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
     // for (float t=0.; t<1.; t+=.01) {
@@ -470,6 +478,14 @@ int main(int argc, char** argv){
     TGAImage zMap(width, height, TGAImage::GRAYSCALE);
     zBuffer.clear();
 
+    //camrea
+    // 相机放在模型正前方 +z 处，朝 -z 方向看（与原来的正交投影朝向一致）。
+    // 模型包围盒是 x∈[-0.76,0.76]、y∈[-1,1]、z∈[-0.81,0.81]：
+    // 若把相机放在原点，模型有一半落在相机背后，project_camera 会把它们压成 (0,0)，
+    // 而 z 接近 0 的顶点又会因 x*f/z 得到百万级像素坐标，于是整张图什么都画不出来。
+    double focalLength = 1000;
+    Vec3 cameraPose(1,2,3);
+
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
@@ -526,16 +542,23 @@ int main(int argc, char** argv){
                 // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
                 // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
                 // =============================================================
-                auto [x, y, z] = project(rotY(nowVec,60));
-                screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
+                //auto [x_1, y_1, z_1] = project(nowVec);
+                // 相机空间：把世界点平移到相机原点，同时把“看向”方向（-z）翻成正 z。
+                // project_camera 里的 v.z 是“到相机的正向距离”，必须恒为正，
+                // 所以这里用 cameraPose.z - nowVec.z，而不是 nowVec.z - cameraPose.z。
+                Vec3 viewSpace(nowVec.x - cameraPose.x,
+                               nowVec.y - cameraPose.y,
+                               cameraPose.z - nowVec.z);
+                auto [x_2, y_2, z_2] = project_camera(viewSpace, focalLength);
+                screenVert newVec(static_cast<int>(x_2), static_cast<int>(y_2), static_cast<int>(z_2)); 
                 face.push_back(newVec);
             }
 
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-            //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
-            triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
+            triangle_3_1(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,  framebuffer, rnd);
+            //triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
             //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
 
@@ -544,8 +567,8 @@ int main(int argc, char** argv){
         // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        zMap.write_tga_file("out/diablo3_pose_depth_rotY.tga", false);
+        framebuffer.write_tga_file("out/diablo3_pose_camera.tga", false);
+        //zMap.write_tga_file("out/diablo3_pose_depth_move.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
