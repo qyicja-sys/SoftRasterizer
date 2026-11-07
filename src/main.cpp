@@ -7,6 +7,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <utility>
+#include <tuple>
 #include "zbuffer.h"
 
 // TGAColor 的通道类型是 std::uint8_t，取值范围 0~255。
