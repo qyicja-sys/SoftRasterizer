@@ -14,8 +14,9 @@ struct screenVert
     int x;
     int y;
     float z;
+    bool valid;
 
-    screenVert(int x,int y, float z) : x(x), y(y), z(z) {}
+    screenVert(int x,int y, float z, bool valid) : x(x), y(y), z(z), valid(valid) {}
 };
 
 class Model{

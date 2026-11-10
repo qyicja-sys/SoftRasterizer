@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <utility>
 #include "zbuffer.h"
+#include "camera.h"
 
 // TGAColor 的通道类型是 std::uint8_t，取值范围 0~255。
 // 写成 256 属于常量表达式中的窄化转换（ill-formed），会直接编译失败。
@@ -27,6 +28,36 @@ std::tuple<int,int,int> project(Vec3 v) { // 首先，(x,y) 是向量 (x,y,z) �
     return { (v.x + 1.) *  width/2,       // 其次，由于输入模型已经缩放到适合放在 [-1,1]^3 的世界坐标中，
              (1.-v.y) * height/2,       // 我们希望先平移向量 (x,y)，再缩放它使其铺满整个屏幕。
              (1.-v.z) *   255./2 };
+             // ================= 坐标映射：模型空间 → 屏幕空间 =================
+                // 两套坐标系不一样：
+                //   模型坐标：原点在模型中心，x 向右，y 向上，范围约 [-1, 1]；
+                //   屏幕坐标：原点在画面左上角，x 向右，y 向下，范围 [0, 800)。
+                //
+                // x 方向（不需要翻转）：
+                //   模型 x=-1（最左）→ 屏幕 x=0
+                //   模型 x=+1（最右）→ 屏幕 x=800
+                //   公式：屏幕x = (x + 1) / 2 * 宽 = (x + 1) * (width / 2)
+                //   先把 [-1,1] 平移成 [0,2]，再乘半宽缩放到 [0,800]。
+                //
+                // y 方向（必须翻转）：
+                //   模型 y 越大表示越高；屏幕 y 越大表示越靠下，两者方向相反。
+                //   如果照搬 x 的写法写成 (y + 1) * 半高：
+                //       模型 y=+1（头顶）→ 屏幕 y=800（最底部）
+                //       模型 y=-1（脚底）→ 屏幕 y=0  （最顶部）
+                //   结果就是头朝下、脚朝上。
+                //   所以先取反：屏幕y = (1 - y) / 2 * 高 = (1 - y) * (height / 2)
+                //       模型 y=+1（头顶）→ (1-1)=0 → 屏幕 y=0  （最上方）
+                //       模型 y= 0（腰部）→ (1-0)=1 → 屏幕 y=400（正中间）
+                //       模型 y=-1（脚底）→ (1+1)=2 → 屏幕 y=800（最下方）
+                //   等价于把 [-1,1] 映射成 [2,0]（递减），方向就反过来了。
+                //
+                // z 方向（本轮不参与）：
+                //   屏幕是二维的，line() 只需要 x、y；z 原样保存在 screenVert 中，
+                //   等做 z-buffer（判断哪个三角形在前、谁被遮挡）时才会用到。
+                //
+                // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
+                // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
+                // =============================================================
 }
 
 //按重心坐标((1-t),t)权重，来进行绘制，由近到远(A-B)
@@ -366,12 +397,15 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, float az, float 
 void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, int az, int bz, int cz, TGAColor aColor, TGAColor bColor, TGAColor cColor, TGAImage &framebuffer) {
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L > 0) return; // 背面（屏幕空间顺时针）
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
+    int bbminx = std::max(0, std::min({ax, bx, cx}));            // 三角形的包围盒
+    int bbminy = std::max(0, std::min({ay, by, cy}));            // 由左上角和右下角定义
+    int bbmaxx = std::min(width  - 1, std::max({ax, bx, cx}));
+    int bbmaxy = std::min(height - 1, std::max({ay, by, cy}));
+    if(bbminx > bbmaxx || bbminy > bbmaxy) return; // 包围盒与屏幕无交集
 
     double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if(std::abs(triangle_area) < 1e-12) return; // 退化三角形（三点共线/重合），面积可正可负
+
     double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
     double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
     double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
@@ -420,12 +454,14 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L > 0) return; // 背面（屏幕空间顺时针）
 
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
+    int bbminx = std::max(0, std::min({ax, bx, cx}));            // 裁剪到屏幕范围
+    int bbminy = std::max(0, std::min({ay, by, cy}));
+    int bbmaxx = std::min(width  - 1, std::max({ax, bx, cx}));
+    int bbmaxy = std::min(height - 1, std::max({ay, by, cy}));
+    if(bbminx > bbmaxx || bbminy > bbmaxy) return; // 包围盒与屏幕无交集
 
     double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if(std::abs(triangle_area) < 1e-12) return; // 退化三角形（三点共线/重合）
     double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
     double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
     double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
@@ -454,11 +490,12 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
             beta_init += b2;
             gamma_init += b3;
             if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            double depth = alpha * az + beta * bz + gamma * cz;
+            unsigned char z = static_cast<unsigned char>(std::clamp(depth, 0.0, 254.0));
             if(!zBuffer.testAndSet(x, y, z)){
                 continue;
             }
-            framebuffer.set(x, y, {static_cast<uint8_t>(1-z)});
+            framebuffer.set(x, y, {static_cast<uint8_t>(255 - z)}); // 近亮远暗
         }
     }
 }
@@ -470,6 +507,13 @@ int main(int argc, char** argv){
     TGAImage zMap(width, height, TGAImage::GRAYSCALE);
     zBuffer.clear();
 
+    camera newCamera(500, width, height);
+    // 相机必须在模型前方：worldToCamera 里 z 取反后，要求 position.z > 模型最大 z。
+    // 放在原点等于站在模型内部，一半顶点 z_cam <= 0 被判为无效，
+    // 另一半 z_cam 趋近 0，透视除法后坐标放大到屏幕外，最终仍是一片黑。
+    newCamera.setPosition(Vec3(0, 0, 2));
+    newCamera.setRotation(Vec3(0, 0, 0));
+
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
@@ -480,10 +524,25 @@ int main(int argc, char** argv){
         Vec3 firstVect = newModel.vert(0);
         std::cout << "第一个顶点：" << firstVect.x << " " << firstVect.y <<  " " << firstVect.z << std::endl;
 
+        // 统计模型在相机空间的深度范围，用于把深度归一化到 [0,254]。
+        // 相机空间 z 本身只有 1.2~2.8 这种小范围，直接转 unsigned char 会被截断成 1/2，
+        // 深度图就只剩两三个灰度级，看起来“不对”。
+        float zNear = 1e30f;
+        float zFar  = -1e30f;
+        for (int i = 0; i < newModel.nverts(); i++) {
+            float z = newCamera.worldToCamera(newModel.vert(i)).z;
+            if (z > 0) {
+                zNear = std::min(zNear, z);
+                zFar  = std::max(zFar,  z);
+            }
+        }
+        const float invDepthRange = (zFar > zNear) ? 1.0f / (zFar - zNear) : 0.0f;
+
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
         // face(i) 返回的是 3 个“顶点下标”，不是坐标；
         // 必须再用 vert(下标) 查表，才能拿到真正的 3D 坐标。
         for(int i=0;i<newModel.nfaces();i++){
+            bool faceValid = true;
             const std::array<int,3> modelFace = newModel.face(i);// 第 i 个面的 3 个顶点下标
 
             // 先收集这个三角形的 3 个屏幕点，再统一画线。
@@ -495,42 +554,19 @@ int main(int argc, char** argv){
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
                 Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
-
-                // ================= 坐标映射：模型空间 → 屏幕空间 =================
-                // 两套坐标系不一样：
-                //   模型坐标：原点在模型中心，x 向右，y 向上，范围约 [-1, 1]；
-                //   屏幕坐标：原点在画面左上角，x 向右，y 向下，范围 [0, 800)。
-                //
-                // x 方向（不需要翻转）：
-                //   模型 x=-1（最左）→ 屏幕 x=0
-                //   模型 x=+1（最右）→ 屏幕 x=800
-                //   公式：屏幕x = (x + 1) / 2 * 宽 = (x + 1) * (width / 2)
-                //   先把 [-1,1] 平移成 [0,2]，再乘半宽缩放到 [0,800]。
-                //
-                // y 方向（必须翻转）：
-                //   模型 y 越大表示越高；屏幕 y 越大表示越靠下，两者方向相反。
-                //   如果照搬 x 的写法写成 (y + 1) * 半高：
-                //       模型 y=+1（头顶）→ 屏幕 y=800（最底部）
-                //       模型 y=-1（脚底）→ 屏幕 y=0  （最顶部）
-                //   结果就是头朝下、脚朝上。
-                //   所以先取反：屏幕y = (1 - y) / 2 * 高 = (1 - y) * (height / 2)
-                //       模型 y=+1（头顶）→ (1-1)=0 → 屏幕 y=0  （最上方）
-                //       模型 y= 0（腰部）→ (1-0)=1 → 屏幕 y=400（正中间）
-                //       模型 y=-1（脚底）→ (1+1)=2 → 屏幕 y=800（最下方）
-                //   等价于把 [-1,1] 映射成 [2,0]（递减），方向就反过来了。
-                //
-                // z 方向（本轮不参与）：
-                //   屏幕是二维的，line() 只需要 x、y；z 原样保存在 screenVert 中，
-                //   等做 z-buffer（判断哪个三角形在前、谁被遮挡）时才会用到。
-                //
-                // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
-                // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
-                // =============================================================
-                auto [x, y, z] = project(rotY(nowVec,60));
-                screenVert newVec(static_cast<int>(x), static_cast<int>(y), static_cast<int>(z));
+                Vec3 cameraVec = newCamera.worldToCamera(nowVec);
+                screenVert screenVec = newCamera.projectToScreen(cameraVec);
+                if(!screenVec.valid){
+                    faceValid = false;
+                    break;
+                }
+                // 归一化深度：0 = 最近，254 = 最远；留出 255 给 z-buffer 的初值。
+                float depth = (screenVec.z - zNear) * invDepthRange * 254.0f;
+                screenVert newVec(screenVec.x, screenVec.y, depth, screenVec.valid);
                 face.push_back(newVec);
             }
-
+            if(!faceValid) continue;
+            
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             TGAColor rnd;
             for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
@@ -545,7 +581,7 @@ int main(int argc, char** argv){
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
         //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        zMap.write_tga_file("out/diablo3_pose_depth_rotY.tga", false);
+        zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;

@@ -55,12 +55,18 @@ void camera::setViewport(int width, int height){
 }
 
 Vec3 camera::worldToCamera(Vec3 world){
-    return world - position;
+    // 相机沿 -z 方向观察，而 projectToScreen 的透视除法要求“相机前方 z > 0”。
+    // 若直接返回 world - position，模型在相机前方时 z 恒为负（如相机在 z=5，
+    // 模型 z≈0，得到 -5），会被 projectToScreen 的 z<=0 分支全部退化成 (0,0,0)，
+    // 于是所有三角形面积为零，整张图全黑。因此这里把 z 取反。
+    Vec3 cameraSpace = world - position;
+    cameraSpace.z = -cameraSpace.z;
+    return cameraSpace;
 }
 
 screenVert camera::projectToScreen(Vec3 world){
     if(world.z <= 0)
-        return screenVert(0, 0, 0);
+        return screenVert(0, 0, 0, false);
     int width = this->width;
     int height = this->height;
     Vec3 screen(static_cast<float>(world.x * focalLength / world.z + width / 2.0),
@@ -68,7 +74,7 @@ screenVert camera::projectToScreen(Vec3 world){
                  world.z);
     return screenVert(static_cast<int>(std::round(screen.x)), 
                       static_cast<int>(std::round(screen.y)), 
-                      std::round(screen.z));
+                      screen.z, true); // 深度保留浮点，round 成整数会只剩几档深度
 }
 
 screenVert camera::worldToScreen(Vec3 world){
