@@ -30,6 +30,7 @@ add_executable(SoftRasterizer
     src/main.cpp           # 程序入口
     src/model.cpp
     src/zbuffer.cpp        # 深度缓冲实现（main.cpp 里的 ZBuffer 全局对象依赖它）
+    src/camera.cpp         # 摄像机实现（main.cpp 依赖其定义）
 )
 
 # 7. 为可执行文件指定私有头文件路径
