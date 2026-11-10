@@ -439,9 +439,8 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
 
             for (int i = 0; i < 3; i++) {
                 color[i] = static_cast<uint8_t>(std::round(
-                    aColor[i] * alpha +
-                    bColor[i] * beta +
-                    cColor[i] * gamma
+                    (aColor[i] * alpha / az + bColor[i] * beta / bz + cColor[i] * gamma / cz) / 
+                    (alpha/az + beta/bz + gamma/cz)
                 ));
             }
             color[3] = static_cast<uint8_t>(255);
