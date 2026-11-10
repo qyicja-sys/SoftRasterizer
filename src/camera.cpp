@@ -59,5 +59,18 @@ Vec3 camera::worldToCamera(Vec3 world){
 }
 
 screenVert camera::projectToScreen(Vec3 world){
-    Vec3 screen = 
+    if(world.z <= 0)
+        return screenVert(0, 0, 0);
+    int width = this->width;
+    int height = this->height;
+    Vec3 screen(static_cast<float>(world.x * focalLength / world.z + width / 2.0),
+                 static_cast<float>(height / 2.0 - world.y * focalLength / world.z),
+                 world.z);
+    return screenVert(static_cast<int>(std::round(screen.x)), 
+                      static_cast<int>(std::round(screen.y)), 
+                      std::round(screen.z));
+}
+
+screenVert camera::worldToScreen(Vec3 world){
+    return projectToScreen(worldToCamera(world));
 }

@@ -34,5 +34,5 @@ class camera{
         //摄像机坐标到屏幕坐标
         screenVert projectToScreen(Vec3 vertex);
         //世界坐标到屏幕坐标
-        Vec3 worldToScreen(Vec3 vertex);
+        screenVert worldToScreen(Vec3 vertex);
 };
