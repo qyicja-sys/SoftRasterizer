@@ -3,7 +3,7 @@
 #include <initializer_list>
 
 // 行列数用 std::size_t 更贴合数组下标，避免 int -> size_t 的隐式转换告警
-template <std::size_t R, std::size_t C, typename T = float>
+template <std::size_t R, std::size_t C, typename T = double>
 struct mat{
     T data[R][C];
 
