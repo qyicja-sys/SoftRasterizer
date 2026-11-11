@@ -16,6 +16,22 @@ ZBuffer::~ZBuffer()
 {
 }
 
+void ZBuffer::setNearPlane(double nearPlane){
+    this->nearPlane = nearPlane;
+}
+
+void ZBuffer::setFarPlane(double farPlane){
+    this->farPlane = farPlane;
+}
+
+float ZBuffer::getNearPlane() const{
+    return nearPlane;
+}
+
+float ZBuffer::getFarPlane() const{
+    return farPlane;
+}
+
 void ZBuffer::clear(){
     zBuffer.assign(width * height, kZBufferInit);
 }
