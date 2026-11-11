@@ -6,3 +6,8 @@ mat<3, 3, float> matrix::matrix_33(const mat<3, 3, float>& lhs, const mat<3, 3, 
     //3x3 矩阵乘法：直接复用 mat 的 operator*
     return lhs * rhs1;
 }
+
+mat<4, 4, float> matrix::matrix_44(const mat<4, 4, float>& lhs, const mat<4, 4, float>& rhs1){
+    //4x4 矩阵乘法：直接复用 mat 的 operator*
+    return lhs * rhs1;
+}

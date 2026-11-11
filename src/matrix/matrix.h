@@ -54,4 +54,5 @@ class matrix{
 
         // 矩阵乘法
         mat<3, 3, float> matrix_33(const mat<3, 3, float>& lhs, const mat<3, 3, float>& rhs1);
+        mat<4, 4, float> matrix_44(const mat<4, 4, float>& lhs, const mat<4, 4, float>& rhs1);
 };
