@@ -56,6 +56,12 @@ struct Vec3{
        double operator*(const Vec3& other) const {
         return x * other.x + y * other.y + z * other.z;
     }
+
+    //向量的除法
+    Vec3 operator/(const float& other) const {
+        return Vec3(x / other, y / other, z / other);
+    }
+
     // 向量的模长
     double magnitude() const {
         return std::sqrt(x * x + y * y + z * z);
@@ -88,6 +94,14 @@ inline Vec3 rotZ(const Vec3& v, double angle) {
     return Rz*v;
 }
 
+Vec3 crossProduct(const Vec3& a, const Vec3& b){
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+Vec3 normalize(const Vec3& v){
+    return v / v.magnitude();
+}
+
 struct Vec4{
     float x;
     float y;
@@ -106,8 +120,22 @@ struct Vec4{
        double operator*(const Vec4& other) const {
         return x * other.x + y * other.y + z * other.z + w * other.w;
     }
+
+    // 向量的除法
+    Vec4 operator/(const float& other) const {
+        return Vec4(x / other, y / other, z / other, w / other);
+    }
+
     // 向量的模长
     double magnitude() const {
         return std::sqrt(x * x + y * y + z * z + w * w);
     }
 };
+
+//四阶矩阵乘向量
+inline Vec4 operator*(const mat<4,4>& m, const Vec4& v) {
+    return Vec4(m(0,0)*v.x + m(0,1)*v.y + m(0,2)*v.z + m(0,3)*v.w,
+                m(1,0)*v.x + m(1,1)*v.y + m(1,2)*v.z + m(1,3)*v.w,
+                m(2,0)*v.x + m(2,1)*v.y + m(2,2)*v.z + m(2,3)*v.w,
+                m(3,0)*v.x + m(3,1)*v.y + m(3,2)*v.z + m(3,3)*v.w);
+}
