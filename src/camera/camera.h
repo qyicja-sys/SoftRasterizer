@@ -1,7 +1,7 @@
 #pragma once
-#include "matrix.h"
-#include "vec.h"
-#include "model.h"
+#include "matrix/matrix.h"
+#include "vec/Vec.h"
+#include "model/model.h"
 
 class camera{
     private:

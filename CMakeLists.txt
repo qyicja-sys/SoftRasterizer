@@ -28,9 +28,9 @@ target_include_directories(softrasterizer_core PUBLIC ${PROJECT_SOURCE_DIR}/incl
 # 6. 添加可执行文件目标
 add_executable(SoftRasterizer
     src/main.cpp           # 程序入口
-    src/model.cpp
-    src/zbuffer.cpp        # 深度缓冲实现（main.cpp 里的 ZBuffer 全局对象依赖它）
-    src/camera.cpp         # 摄像机实现（main.cpp 依赖其定义）
+    src/model/model.cpp
+    src/zbuffer/zbuffer.cpp        # 深度缓冲实现（main.cpp 里的 ZBuffer 全局对象依赖它）
+    src/camera/camera.cpp         # 摄像机实现（main.cpp 依赖其定义）
 )
 
 # 7. 为可执行文件指定私有头文件路径
@@ -45,7 +45,7 @@ target_link_libraries(SoftRasterizer PRIVATE softrasterizer_core)
 #     输出到 build/bin，与 SoftRasterizer.exe 并列，便于 launch.json 引用。
 add_executable(SoftRasterizerTest
     test/main.cpp
-    src/model.cpp          # 测试也要加载 OBJ，复用同一份解析实现
+    src/model/model.cpp          # 测试也要加载 OBJ，复用同一份解析实现
 )
 
 target_include_directories(SoftRasterizerTest PRIVATE ${PROJECT_SOURCE_DIR}/src)

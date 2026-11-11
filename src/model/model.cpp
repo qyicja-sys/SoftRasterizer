@@ -1,5 +1,5 @@
 #include <iostream>
-#include "model.h"
+#include "model/model.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>

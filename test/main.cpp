@@ -1,5 +1,5 @@
 #include "tgaimage.h"
-#include "model.h"
+#include "model/model.h"
 
 #include <algorithm>
 #include <array>

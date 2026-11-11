@@ -3,7 +3,7 @@
 #include <string>
 #include <array>
 #include <cmath>
-#include "Vec.h"
+#include "vec/Vec.h"
 
 
 

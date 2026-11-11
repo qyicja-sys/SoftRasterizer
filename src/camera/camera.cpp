@@ -1,5 +1,5 @@
-#include "camera.h"
-#include "matrix.h"
+#include "camera/camera.h"
+#include "matrix/matrix.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

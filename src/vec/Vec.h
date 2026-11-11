@@ -3,7 +3,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
-#include "matrix.h"
+#include "matrix/matrix.h"
 
 // 严格 -std=c++17 下 <cmath> 不暴露 M_PI，这里兜底定义；已有定义时不重复定义
 #ifndef M_PI

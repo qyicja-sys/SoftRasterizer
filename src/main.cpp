@@ -1,5 +1,5 @@
 #include "tgaimage.h"
-#include "model.h"
+#include "model/model.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -7,8 +7,8 @@
 #include <ctime>
 #include <cstdlib>
 #include <utility>
-#include "zbuffer.h"
-#include "camera.h"
+#include "zbuffer/zbuffer.h"
+#include "camera/camera.h"
 
 // TGAColor 的通道类型是 std::uint8_t，取值范围 0~255。
 // 写成 256 属于常量表达式中的窄化转换（ill-formed），会直接编译失败。
