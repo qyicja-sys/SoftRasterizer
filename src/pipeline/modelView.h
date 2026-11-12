@@ -9,6 +9,7 @@ class modelView{
     public:
         modelView() : modelViewMatrix() {}
         void lookat(Vec3 position, const Vec3 center, const Vec3 up);
+        mat<4,4,double> getModelViewMatrix() const;
 };
 
 
