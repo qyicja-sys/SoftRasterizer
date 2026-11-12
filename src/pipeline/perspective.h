@@ -3,6 +3,7 @@
 #include "vec/Vec.h"
 #include "model/model.h"
 #include "camera/camera.h"
+#include "zbuffer/zbuffer.h"
 
 class perspective{
     private:
