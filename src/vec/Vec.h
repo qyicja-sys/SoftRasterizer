@@ -113,17 +113,39 @@ struct Vec4{
     Vec4 operator+(const Vec4& other) const {
         return Vec4(x + other.x, y + other.y, z + other.z, w + other.w);
     }
+
+    //向量加常量
+    Vec4 operator+(const float& other) const {
+        return Vec4(x + other, y + other, z + other, w + other);
+    }
+
     Vec4 operator-(const Vec4& other) const {
         return Vec4(x - other.x, y - other.y, z - other.z, w - other.w);
     }
+
+    //向量减常量
+    Vec4 operator-(const float& other) const {
+        return Vec4(x - other, y - other, z - other, w - other);
+    }
+
     // 向量的点积
-       double operator*(const Vec4& other) const {
+       float operator*(const Vec4& other) const {
         return x * other.x + y * other.y + z * other.z + w * other.w;
+    }
+
+    // 向量乘以常量
+    Vec4 operator*(const float& other) const {
+        return Vec4(x * other, y * other, z * other, w * other);
     }
 
     // 向量的除法
     Vec4 operator/(const float& other) const {
         return Vec4(x / other, y / other, z / other, w / other);
+    }
+
+    //向量的除法
+    Vec4 operator/(const Vec4& other) const {
+        return Vec4(x / other.x, y / other.y, z / other.z, w / other.w);
     }
 
     // 向量的模长
