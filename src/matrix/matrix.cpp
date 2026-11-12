@@ -7,6 +7,11 @@ mat<3, 3, float> matrix::matrix_33(const mat<3, 3, float>& lhs, const mat<3, 3, 
     return lhs * rhs1;
 }
 
+// 3x3 矩阵的行列式：复用 mat::determinant()
+float matrix::determinant(){
+    return static_cast<float>(m.determinant());
+}
+
 mat<4, 4, float> matrix::matrix_44(const mat<4, 4, float>& lhs, const mat<4, 4, float>& rhs1){
     //4x4 矩阵乘法：直接复用 mat 的 operator*
     return lhs * rhs1;
