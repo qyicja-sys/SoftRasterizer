@@ -25,10 +25,23 @@ mat<3, 3, float> rotationMatrixZ(float angle){
 
 camera::camera(float focalLength, int width, int height)
     : focalLength(focalLength), width(width), height(height),
-      position(0, 0, 0), rotation(0, 0, 0) {
+      position(0, 0, 0), rotation(0, 0, 0),
+      center(0, 0, 0), up(0, 1, 0) {
 }
 
 camera::~camera(){
+}
+
+float camera::getFocalLength() const{
+    return focalLength;
+}
+
+int camera::getWidth() const{
+    return width;
+}
+
+int camera::getHeight() const{
+    return height;
 }
 
 void camera::setPosition(Vec3 position){
