@@ -5,6 +5,10 @@ void viewPort::setViewPort(const int x,const int y){
     viewPortMatrix = mat<4,4,double>{{width/2.0,0,0,x+width/2.0}, {0,-height/2.0f,0,y+height/2.0f}, {0,0,1,0}, {0,0,0,1}};
 }
 
+mat<4,4,double> viewPort::getViewPortMatrix() const{
+    return viewPortMatrix;
+}
+
 int viewPort::getWidth() const{
     return width;
 }

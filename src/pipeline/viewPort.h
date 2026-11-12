@@ -8,6 +8,7 @@ class viewPort{
     public:
         viewPort() : viewPortMatrix() {}
         void setViewPort(const int x,const int y);
+        mat<4,4,double> getViewPortMatrix() const;
 
         int getWidth() const;
         int getHeight() const;
