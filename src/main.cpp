@@ -9,6 +9,13 @@
 #include <utility>
 #include "zbuffer/zbuffer.h"
 #include "camera/camera.h"
+#include "pipeline/modelview.h"
+#include "pipeline/perspective.h"
+#include "pipeline/clipper.h"
+#include "pipeline/viewport.h"
+#include "pipeline/rasterize.h"
+
+
 
 // TGAColor 的通道类型是 std::uint8_t，取值范围 0~255。
 // 写成 256 属于常量表达式中的窄化转换（ill-formed），会直接编译失败。
@@ -352,12 +359,14 @@ void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, float az, float 
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L > 0) return; // 背面（屏幕空间顺时针）
 
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
+    int bbminx = std::max(0, std::min({ax, bx, cx}));            // 三角形的包围盒
+    int bbminy = std::max(0, std::min({ay, by, cy}));            // 由左上角和右下角定义
+    int bbmaxx = std::min(width  - 1, std::max({ax, bx, cx}));
+    int bbmaxy = std::min(height - 1, std::max({ay, by, cy}));
 
     double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if(std::abs(triangle_area) < 1e-12) return; // 退化三角形（三点共线/重合），面积可正可负
+
     double alpha_area_start =signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
     double beta_area_start =signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
     double gamma_area_start =signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
@@ -500,11 +509,22 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
 }
 
 int main(int argc, char** argv){
+    rasterize TGArasterize;
+
+    modelView newModelView;
+    perspective newPerspective;
+    clipper newClipper;
+    viewPort newViewport;
+    
+    TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer);
+
     // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
     // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
     TGAImage framebuffer(width, height, TGAImage::RGB);
     TGAImage zMap(width, height, TGAImage::GRAYSCALE);
     zBuffer.clear();
+    zBuffer.setNearPlane(1e-30f);
+    zBuffer.setFarPlane(1e30f);
 
     camera newCamera(500, width, height);
     // 相机必须在模型前方：worldToCamera 里 z 取反后，要求 position.z > 模型最大 z。
@@ -526,16 +546,14 @@ int main(int argc, char** argv){
         // 统计模型在相机空间的深度范围，用于把深度归一化到 [0,254]。
         // 相机空间 z 本身只有 1.2~2.8 这种小范围，直接转 unsigned char 会被截断成 1/2，
         // 深度图就只剩两三个灰度级，看起来“不对”。
-        float zNear = 1e30f;
-        float zFar  = -1e30f;
         for (int i = 0; i < newModel.nverts(); i++) {
             float z = newCamera.worldToCamera(newModel.vert(i)).z;
             if (z > 0) {
-                zNear = std::min(zNear, z);
-                zFar  = std::max(zFar,  z);
+                zBuffer.setNearPlane(std::min(zBuffer.getNearPlane(), z));
+                zBuffer.setFarPlane(std::max(zBuffer.getFarPlane(),  z));
             }
         }
-        const float invDepthRange = (zFar > zNear) ? 1.0f / (zFar - zNear) : 0.0f;
+        const float invDepthRange = (zBuffer.getFarPlane() > zBuffer.getNearPlane()) ? 1.0f / (zBuffer.getFarPlane() - zBuffer.getNearPlane()) : 0.0f;
 
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
         // face(i) 返回的是 3 个“顶点下标”，不是坐标；
@@ -560,7 +578,7 @@ int main(int argc, char** argv){
                     break;
                 }
                 // 归一化深度：0 = 最近，254 = 最远；留出 255 给 z-buffer 的初值。
-                float depth = (screenVec.z - zNear) * invDepthRange * 254.0f;
+                float depth = (screenVec.z - zBuffer.getNearPlane()) * invDepthRange * 254.0f;
                 screenVert newVec(screenVec.x, screenVec.y, depth, screenVec.valid);
                 face.push_back(newVec);
             }
