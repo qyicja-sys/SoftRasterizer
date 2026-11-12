@@ -44,6 +44,22 @@ int camera::getHeight() const{
     return height;
 }
 
+Vec3 camera::getPosition() const{
+    return position;
+}
+
+Vec3 camera::getRotation() const{
+    return rotation;
+}
+
+Vec3 camera::getCenter() const{
+    return center;
+}
+
+Vec3 camera::getUp() const{
+    return up;
+}
+
 void camera::setPosition(Vec3 position){
     this->position = position;
 }

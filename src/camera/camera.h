@@ -18,12 +18,15 @@ class camera{
         
     public:
         camera(float focalLength, int width, int height);
+        camera();
         ~camera();
 
         //获取方向
         Vec3 getDirection(int x, int y) const;
         Vec3 getPosition() const;
         Vec3 getRotation() const;
+        Vec3 getCenter() const;
+        Vec3 getUp() const;
         float getFocalLength() const;
         int getWidth() const;
         int getHeight() const;
