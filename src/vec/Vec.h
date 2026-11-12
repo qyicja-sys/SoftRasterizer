@@ -152,6 +152,10 @@ struct Vec4{
     double magnitude() const {
         return std::sqrt(x * x + y * y + z * z + w * w);
     }
+
+    Vec2 getScreenCoord() const{
+        return Vec2(x, y);
+    }
 };
 
 //四阶矩阵乘向量
