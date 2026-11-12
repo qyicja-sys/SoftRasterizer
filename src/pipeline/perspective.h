@@ -8,14 +8,14 @@
 class perspective{
     private:
         mat<4,4,double> perspectiveMatrix;
-        camera* cam;
+        camera cam;
 
     public:
-        perspective() : perspectiveMatrix(), cam(nullptr) {}
+        perspective() : perspectiveMatrix(), cam() {}
 
-        void setCamera(camera* c){
-            cam = c;
-        }
+        void setCamera(camera& c);
 
         void perspectiveTransform(ZBuffer& zBuffer);
+
+        mat<4,4,double> getPerspectiveMatrix() const;
 };

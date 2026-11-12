@@ -4,8 +4,16 @@
 #include "zbuffer/zbuffer.h"
 
 void perspective::perspectiveTransform(ZBuffer& zBuffer){
-    double f = cam->getFocalLength();
+    double f = cam.getFocalLength();
     float N = zBuffer.getNearPlane();
     float F = zBuffer.getFarPlane();
     perspectiveMatrix = mat<4,4,double>{{f,0,0,0}, {0,f,0,0}, {0,0,(N+F)/(F-N),-2*N*F/(F-N)}, {0,0,1,0}};
+}
+
+void perspective::setCamera(camera& c){
+    cam = c;
+}
+
+mat<4,4,double> perspective::getPerspectiveMatrix() const{
+    return perspectiveMatrix;
 }
