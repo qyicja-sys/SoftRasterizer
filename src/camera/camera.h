@@ -34,6 +34,9 @@ class camera{
         //设置属性(位置、旋转、焦距、视口大小)
         void setPosition(Vec3 position);
         void setRotation(Vec3 rotation);
+        void setCenter(Vec3 center);
+        void setUp(Vec3 up);
+        void setUp(Vec3 up, Vec3 center);
         void setFocalLength(float focalLength);
         void setViewport(int width, int height);
         

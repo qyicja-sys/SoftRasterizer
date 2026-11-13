@@ -71,6 +71,19 @@ void camera::setPosition(Vec3 position){
     this->position = position;
 }
 
+void camera::setCenter(Vec3 center){
+    this->center = center;
+}
+
+void camera::setUp(Vec3 up){
+    this->up = up;
+}
+
+void camera::setUp(Vec3 up, Vec3 center){
+    this->up = up;
+    this->center = center;
+}
+
 void camera::setRotation(Vec3 rotation){
     this->rotation = rotation;
 
