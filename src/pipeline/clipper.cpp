@@ -5,6 +5,9 @@
 
 using namespace std;
 
+clipper::clipper(){
+}
+
 clipper::~clipper(){
 }
 
@@ -115,7 +118,7 @@ void clipper::isClipped(vector<Vec4> polygon){
 vector<vector<Vec4>> clipper::triangulation() const{
     vector<vector<Vec4>> clippedTriangle;
     if (polygon.size() < 3)
-        return;
+        return clippedTriangle;
     // 三角形三角剖分
     for (int i = 1; i < polygon.size() - 1; i++){
         Vec4 A = polygon[0];
@@ -128,6 +131,7 @@ vector<vector<Vec4>> clipper::triangulation() const{
         clippedTriangle.push_back(triangle);
         //rasterizer.triangle(A, B, C);
     }
+    return clippedTriangle;
 }
 
 
