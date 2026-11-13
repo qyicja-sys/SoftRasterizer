@@ -509,28 +509,26 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
 }
 
 int main(int argc, char** argv){
-    rasterize TGArasterize;
-
-    modelView newModelView;
-    perspective newPerspective;
-    clipper newClipper;
-    viewPort newViewport;
-    
-    TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer);
-
     // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
     // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
     TGAImage framebuffer(width, height, TGAImage::RGB);
     TGAImage zMap(width, height, TGAImage::GRAYSCALE);
+
     zBuffer.clear();
-    zBuffer.setNearPlane(1e-30f);
-    zBuffer.setFarPlane(1e30f);
+    zBuffer.setNearPlane(std::numeric_limits< float >:: max ());
+    zBuffer.setFarPlane(0);
+
+    rasterize TGArasterize;
+    modelView newModelView;
+    perspective newPerspective;
+    clipper newClipper;
+    viewPort newViewport;
 
     camera newCamera(500, width, height);
     // 相机必须在模型前方：worldToCamera 里 z 取反后，要求 position.z > 模型最大 z。
     // 放在原点等于站在模型内部，一半顶点 z_cam <= 0 被判为无效，
     // 另一半 z_cam 趋近 0，透视除法后坐标放大到屏幕外，最终仍是一片黑。
-    newCamera.setPosition(Vec3(0, 0, 2));
+    newCamera.setPosition(Vec3(0, 0, 1));
     newCamera.setRotation(Vec3(0, 0, 0));
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
@@ -553,7 +551,12 @@ int main(int argc, char** argv){
                 zBuffer.setFarPlane(std::max(zBuffer.getFarPlane(),  z));
             }
         }
-        const float invDepthRange = (zBuffer.getFarPlane() > zBuffer.getNearPlane()) ? 1.0f / (zBuffer.getFarPlane() - zBuffer.getNearPlane()) : 0.0f;
+        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer);
+        TGArasterize.rasterizeInit(newCamera, width, height);
+        // TGArasterize.rasterize_updateZBuffer(zBuffer);
+        // TGArasterize.rasterize_updatePerspective();
+
+        //const float invDepthRange = (zBuffer.getFarPlane() > zBuffer.getNearPlane()) ? 1.0f / (zBuffer.getFarPlane() - zBuffer.getNearPlane()) : 0.0f;
 
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
         // face(i) 返回的是 3 个“顶点下标”，不是坐标；
@@ -565,30 +568,31 @@ int main(int argc, char** argv){
             // 先收集这个三角形的 3 个屏幕点，再统一画线。
             // 这里创建空 vector 后 push 三次；不能写成 vector(3) 再 push，
             // 那样会先得到 3 个默认元素，再加 3 个新元素，共 6 个。
-            std::vector<screenVert> face;
-            face.reserve(3);
+            std::vector<Vec4> clip;
+            clip.reserve(3);
 
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
                 Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
-                Vec3 cameraVec = newCamera.worldToCamera(nowVec);
-                screenVert screenVec = newCamera.projectToScreen(cameraVec);
-                if(!screenVec.valid){
-                    faceValid = false;
-                    break;
-                }
-                // 归一化深度：0 = 最近，254 = 最远；留出 255 给 z-buffer 的初值。
-                float depth = (screenVec.z - zBuffer.getNearPlane()) * invDepthRange * 254.0f;
-                screenVert newVec(screenVec.x, screenVec.y, depth, screenVec.valid);
-                face.push_back(newVec);
+                Vec3 camPos = newCamera.worldToCamera(nowVec);   // z 取反，得到 1.19~2.81
+                Vec4 nowVec4 = camPos.toVec4();
+                clip.push_back(TGArasterize.rasterizeGetClipVec(nowVec4));
             }
-            if(!faceValid) continue;
+            //if(!faceValid) continue;
+            clipper clipPolygon;
+            clipPolygon.isClipped(clip);
+            vector<vector<Vec4>> ready_rasterize_face = clipPolygon.triangulation();
+            
             
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
-            TGAColor rnd;
-            for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+            for(int i=0;i<ready_rasterize_face.size();i++){
+                TGAColor rnd;
+                for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+                TGArasterize.rasterize_colorMap(ready_rasterize_face[i], framebuffer, rnd);
+            }
+            
             //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
-            triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
+            //triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
             //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
 
@@ -597,8 +601,8 @@ int main(int argc, char** argv){
         // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
+        framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
+        //zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
