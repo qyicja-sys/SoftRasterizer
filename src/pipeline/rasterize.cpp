@@ -72,34 +72,13 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
 
     double triangle_area = signed_triangle_area(screen[0].x, screen[0].y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
 
-    double alpha_area_start =signed_triangle_area(bbminx, bbminy, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
-    double beta_area_start =signed_triangle_area(bbminx, bbminy, screen[2].x, screen[2].y, screen[0].x, screen[0].y);
-    double gamma_area_start =signed_triangle_area(bbminx, bbminy, screen[0].x, screen[0].y, screen[1].x, screen[1].y);
-
-    //X方向的增量
-    double a1 = (screen[1].y - screen[2].y)*.5;
-    double a2 = (screen[2].y - screen[0].y)*.5;
-    double a3 = (screen[0].y - screen[1].y)*.5;
-
-    //Y方向的增量
-    double b1 = (screen[2].x - screen[1].x)*.5;
-    double b2 = (screen[0].x - screen[2].x)*.5;
-    double b3 = (screen[1].x - screen[0].x)*.5;
-    
-
 #pragma omp parallel for
     for (int x=bbminx; x<=bbmaxx; x++) {
-        double alpha_init = alpha_area_start + (x - bbminx)*a1;
-        double beta_init = beta_area_start + (x - bbminx)*a2;
-        double gamma_init = gamma_area_start + (x - bbminx)*a3;
         for (int y=bbminy; y<=bbmaxy; y++) {
-            double alpha = alpha_init / triangle_area;
-            double beta  = beta_init / triangle_area;
-            double gamma = gamma_init / triangle_area;
-            alpha_init += b1;
-            beta_init += b2;
-            gamma_init += b3;
-            const double eps = 1e-6 ;
+            double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
+            double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
+            double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
+            const double eps = 1e-2 ;
             if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
