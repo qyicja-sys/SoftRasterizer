@@ -556,10 +556,6 @@ int main(int argc, char** argv){
         }
         TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer);
         TGArasterize.rasterizeInit(newCamera, width, height);
-        // TGArasterize.rasterize_updateZBuffer(zBuffer);
-        // TGArasterize.rasterize_updatePerspective();
-
-        //const float invDepthRange = (zBuffer.getFarPlane() > zBuffer.getNearPlane()) ? 1.0f / (zBuffer.getFarPlane() - zBuffer.getNearPlane()) : 0.0f;
 
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
         // face(i) 返回的是 3 个“顶点下标”，不是坐标；
@@ -581,7 +577,6 @@ int main(int argc, char** argv){
                 Vec4 nowVec4 = nowVec.toVec4();
                 clip.push_back(TGArasterize.rasterizeGetClipVec(nowVec4));
             }
-            //if(!faceValid) continue;
             clipper clipPolygon;
             clipPolygon.isClipped(clip);
             vector<vector<Vec4>> ready_rasterize_face = clipPolygon.triangulation();
@@ -589,14 +584,10 @@ int main(int argc, char** argv){
             
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             for(int i=0;i<ready_rasterize_face.size();i++){
-                TGAColor rnd;
+                TGAColor rnd = red;
                 for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
                 TGArasterize.rasterize_colorMap(ready_rasterize_face[i], framebuffer, rnd);
             }
-            
-            //triangle_5(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y, face.at(0).z, face.at(1).z, face.at(2).z, framebuffer, rnd);
-            //triangle_6_grey_scale_Map(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, zMap);
-            //triangle_6_interpolation(face.at(0).x, face.at(0).y, face.at(1).x, face.at(1).y, face.at(2).x, face.at(2).y,face.at(0).z, face.at(1).z, face.at(2).z, red, green, blue, framebuffer);
         }
 
         // 输出 TGA。第二个参数 vflip 必须显式传 false：
