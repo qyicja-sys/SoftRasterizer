@@ -29,6 +29,13 @@ camera::camera(float focalLength, int width, int height)
       center(0, 0, 0), up(0, 1, 0) {
 }
 
+// 无参构造：perspective 持有一个 camera 成员，需要默认构造可用
+camera::camera()
+    : focalLength(0), width(0), height(0),
+      center(0, 0, 0), up(0, 1, 0),
+      position(0, 0, 0), rotation(0, 0, 0), rotationMatrix() {
+}
+
 camera::~camera(){
 }
 
