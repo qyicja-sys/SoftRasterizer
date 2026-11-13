@@ -35,6 +35,8 @@ struct Vec2{
 
 // 前置声明：Vec3 的旋转函数里要用到 mat * Vec3，运算符必须在结构体定义之前可见
 struct Vec3;
+// 前置声明：Vec3::toVec4() 返回 Vec4，定义放在 Vec4 之后
+struct Vec4;
 inline Vec3 operator*(const mat<3,3>& m, const Vec3& v);
 
 // 模型空间中的三维点：x、y、z 对应 OBJ 文件 v 行的三个数。
@@ -66,6 +68,9 @@ struct Vec3{
     double magnitude() const {
         return std::sqrt(x * x + y * y + z * z);
     }
+
+    //vec3转vec4（定义见文件末尾，Vec4 定义之后）
+    Vec4 toVec4() const;
 };
 
 // 三阶矩阵乘向量（放在 Vec3 定义之后，避免 matrix.h 反向包含 Vec.h）
@@ -94,11 +99,11 @@ inline Vec3 rotZ(const Vec3& v, double angle) {
     return Rz*v;
 }
 
-Vec3 crossProduct(const Vec3& a, const Vec3& b){
+inline Vec3 crossProduct(const Vec3& a, const Vec3& b){
     return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
-Vec3 normalize(const Vec3& v){
+inline Vec3 normalize(const Vec3& v){
     return v / v.magnitude();
 }
 
@@ -156,7 +161,13 @@ struct Vec4{
     Vec2 getScreenCoord() const{
         return Vec2(x, y);
     }
+    
 };
+
+//vec3 转 vec4：齐次坐标 w 补 1
+inline Vec4 Vec3::toVec4() const {
+    return Vec4(x, y, z, 1);
+}
 
 //四阶矩阵乘向量
 inline Vec4 operator*(const mat<4,4>& m, const Vec4& v) {
