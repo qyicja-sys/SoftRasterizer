@@ -529,6 +529,9 @@ int main(int argc, char** argv){
     // 放在原点等于站在模型内部，一半顶点 z_cam <= 0 被判为无效，
     // 另一半 z_cam 趋近 0，透视除法后坐标放大到屏幕外，最终仍是一片黑。
     newCamera.setPosition(Vec3(0, 0, 1));
+    newCamera.setCenter(Vec3(0, 0, 0));
+    newCamera.setUp(Vec3(0, 1, 0));
+
     newCamera.setRotation(Vec3(0, 0, 0));
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
@@ -574,8 +577,8 @@ int main(int argc, char** argv){
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
                 Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
-                Vec3 camPos = newCamera.worldToCamera(nowVec);   // z 取反，得到 1.19~2.81
-                Vec4 nowVec4 = camPos.toVec4();
+                //Vec3 camPos = newCamera.worldToCamera(nowVec);   // z 取反，得到 1.19~2.81
+                Vec4 nowVec4 = nowVec.toVec4();
                 clip.push_back(TGArasterize.rasterizeGetClipVec(nowVec4));
             }
             //if(!faceValid) continue;
