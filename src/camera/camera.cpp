@@ -59,6 +59,10 @@ Vec3 camera::getRotation() const{
     return rotation;
 }
 
+mat<3, 3, double> camera::getRotationMatrix() const{
+    return rotationMatrix;
+}
+
 Vec3 camera::getCenter() const{
     return center;
 }

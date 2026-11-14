@@ -25,6 +25,7 @@ class camera{
         Vec3 getDirection(int x, int y) const;
         Vec3 getPosition() const;
         Vec3 getRotation() const;
+        mat<3, 3, double> getRotationMatrix() const;
         Vec3 getCenter() const;
         Vec3 getUp() const;
         float getFocalLength() const;
