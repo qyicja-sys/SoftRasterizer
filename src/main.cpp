@@ -425,7 +425,6 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
     }
 }
 
-//深度绘制
 void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, float az, float bz, float cz, TGAImage &framebuffer) {
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L > 0) return; // 背面（屏幕空间顺时针）
@@ -485,8 +484,8 @@ int main(int argc, char** argv){
     // 模型包围盒是 x∈[-0.76,0.76]、y∈[-1,1]、z∈[-0.81,0.81]：
     // 若把相机放在原点，模型有一半落在相机背后，project_camera 会把它们压成 (0,0)，
     // 而 z 接近 0 的顶点又会因 x*f/z 得到百万级像素坐标，于是整张图什么都画不出来。
-    double focalLength = 1000;
-    Vec3 cameraPose(0,0,3);
+    double focalLength = 600;
+    Vec3 cameraPose(0,0,2);
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
@@ -513,46 +512,15 @@ int main(int argc, char** argv){
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
                 Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
-
-                // ================= 坐标映射：模型空间 → 屏幕空间 =================
-                // 两套坐标系不一样：
-                //   模型坐标：原点在模型中心，x 向右，y 向上，范围约 [-1, 1]；
-                //   屏幕坐标：原点在画面左上角，x 向右，y 向下，范围 [0, 800)。
-                //
-                // x 方向（不需要翻转）：
-                //   模型 x=-1（最左）→ 屏幕 x=0
-                //   模型 x=+1（最右）→ 屏幕 x=800
-                //   公式：屏幕x = (x + 1) / 2 * 宽 = (x + 1) * (width / 2)
-                //   先把 [-1,1] 平移成 [0,2]，再乘半宽缩放到 [0,800]。
-                //
-                // y 方向（必须翻转）：
-                //   模型 y 越大表示越高；屏幕 y 越大表示越靠下，两者方向相反。
-                //   如果照搬 x 的写法写成 (y + 1) * 半高：
-                //       模型 y=+1（头顶）→ 屏幕 y=800（最底部）
-                //       模型 y=-1（脚底）→ 屏幕 y=0  （最顶部）
-                //   结果就是头朝下、脚朝上。
-                //   所以先取反：屏幕y = (1 - y) / 2 * 高 = (1 - y) * (height / 2)
-                //       模型 y=+1（头顶）→ (1-1)=0 → 屏幕 y=0  （最上方）
-                //       模型 y= 0（腰部）→ (1-0)=1 → 屏幕 y=400（正中间）
-                //       模型 y=-1（脚底）→ (1+1)=2 → 屏幕 y=800（最下方）
-                //   等价于把 [-1,1] 映射成 [2,0]（递减），方向就反过来了。
-                //
-                // z 方向（本轮不参与）：
-                //   屏幕是二维的，line() 只需要 x、y；z 原样保存在 screenVert 中，
-                //   等做 z-buffer（判断哪个三角形在前、谁被遮挡）时才会用到。
-                //
-                // 最后转 int：像素坐标必须是整数，float→int 会截断小数。
-                // 线框用截断足够；以后做三角形填充时再讨论更合适的取整方式。
                 // =============================================================
                 //auto [x_1, y_1, z_1] = project(nowVec);
                 // 相机空间：把世界点平移到相机原点，同时把“看向”方向（-z）翻成正 z。
                 // project_camera 里的 v.z 是“到相机的正向距离”，必须恒为正，
                 // 所以这里用 cameraPose.z - nowVec.z，而不是 nowVec.z - cameraPose.z。
-                Vec3 viewSpace_position(nowVec.x - cameraPose.x,
+                Vec3 viewSpace(nowVec.x - cameraPose.x,
                                nowVec.y - cameraPose.y,
                                cameraPose.z - nowVec.z);
-                Vec3 viewSpace_rotation = rotZ(viewSpace_position,60);
-                auto [x_2, y_2, z_2] = project_camera(viewSpace_rotation, focalLength);
+                auto [x_2, y_2, z_2] = project_camera(rotZ(viewSpace,-45), focalLength);
                 screenVert newVec(static_cast<int>(x_2), static_cast<int>(y_2), static_cast<int>(z_2)); 
                 face.push_back(newVec);
             }
