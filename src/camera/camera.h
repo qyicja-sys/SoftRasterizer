@@ -14,7 +14,7 @@ class camera{
         Vec3 up;//向上向量
         Vec3 position;
         Vec3 rotation;
-        mat<3, 3, float> rotationMatrix;//旋转矩阵
+        mat<3, 3, double> rotationMatrix;//旋转矩阵
         
     public:
         camera(float focalLength, int width, int height);

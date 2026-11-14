@@ -5,21 +5,21 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-mat<3, 3, float> rotationMatrixX(float angle){
+mat<3, 3, double> rotationMatrixX(float angle){
     double a = angle*M_PI/180.0;
-    mat<3, 3, float> Rx{{1,0,0}, {0,std::cos(a),-std::sin(a)}, {0,std::sin(a),std::cos(a)}};
+    mat<3, 3, double> Rx{{1,0,0}, {0,std::cos(a),-std::sin(a)}, {0,std::sin(a),std::cos(a)}};
     return Rx;
 }
 
-mat<3, 3, float> rotationMatrixY(float angle){
+mat<3, 3, double> rotationMatrixY(float angle){
     double a = angle*M_PI/180.0;
-    mat<3, 3, float> Ry{{std::cos(a),0,-std::sin(a)}, {0,1,0}, {std::sin(a),0,std::cos(a)}};
+    mat<3, 3, double> Ry{{std::cos(a),0,-std::sin(a)}, {0,1,0}, {std::sin(a),0,std::cos(a)}};
     return Ry;
 }
 
-mat<3, 3, float> rotationMatrixZ(float angle){
+mat<3, 3, double> rotationMatrixZ(float angle){
     double a = angle*M_PI/180.0;
-    mat<3, 3, float> Rz{{std::cos(a),-std::sin(a),0}, {std::sin(a),std::cos(a),0}, {0,0,1}};
+    mat<3, 3, double> Rz{{std::cos(a),-std::sin(a),0}, {std::sin(a),std::cos(a),0}, {0,0,1}};
     return Rz;
 }
 
@@ -87,9 +87,9 @@ void camera::setUp(Vec3 up, Vec3 center){
 void camera::setRotation(Vec3 rotation){
     this->rotation = rotation;
 
-    mat<3, 3, float> Rx = rotationMatrixX(rotation.x);
-    mat<3, 3, float> Ry = rotationMatrixY(rotation.y);
-    mat<3, 3, float> Rz = rotationMatrixZ(rotation.z);
+    mat<3, 3, double> Rx = rotationMatrixX(rotation.x);
+    mat<3, 3, double> Ry = rotationMatrixY(rotation.y);
+    mat<3, 3, double> Rz = rotationMatrixZ(rotation.z);
 
     this->rotationMatrix = Rx*Ry*Rz;
 }
