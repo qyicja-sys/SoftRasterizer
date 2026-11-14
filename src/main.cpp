@@ -425,6 +425,7 @@ void triangle_6_interpolation(int ax, int ay, int bx, int by, int cx, int cy, in
     }
 }
 
+//深度绘制
 void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, float az, float bz, float cz, TGAImage &framebuffer) {
     int L = cross_product(ax, ay, bx, by, cx, cy);
     if(L > 0) return; // 背面（屏幕空间顺时针）
@@ -485,7 +486,7 @@ int main(int argc, char** argv){
     // 若把相机放在原点，模型有一半落在相机背后，project_camera 会把它们压成 (0,0)，
     // 而 z 接近 0 的顶点又会因 x*f/z 得到百万级像素坐标，于是整张图什么都画不出来。
     double focalLength = 1000;
-    Vec3 cameraPose(1,2,3);
+    Vec3 cameraPose(0,0,3);
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
@@ -547,10 +548,11 @@ int main(int argc, char** argv){
                 // 相机空间：把世界点平移到相机原点，同时把“看向”方向（-z）翻成正 z。
                 // project_camera 里的 v.z 是“到相机的正向距离”，必须恒为正，
                 // 所以这里用 cameraPose.z - nowVec.z，而不是 nowVec.z - cameraPose.z。
-                Vec3 viewSpace(nowVec.x - cameraPose.x,
+                Vec3 viewSpace_position(nowVec.x - cameraPose.x,
                                nowVec.y - cameraPose.y,
                                cameraPose.z - nowVec.z);
-                auto [x_2, y_2, z_2] = project_camera(viewSpace, focalLength);
+                Vec3 viewSpace_rotation = rotZ(viewSpace_position,60);
+                auto [x_2, y_2, z_2] = project_camera(viewSpace_rotation, focalLength);
                 screenVert newVec(static_cast<int>(x_2), static_cast<int>(y_2), static_cast<int>(z_2)); 
                 face.push_back(newVec);
             }

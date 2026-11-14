@@ -9,15 +9,52 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
+#include <direct.h>
 #include <iomanip>
 #include <iostream>
 #include <new>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <utility>
 #include <vector>
+
+// ======================= 文件系统小工具 =======================
+// GCC 8.1 的 <filesystem> 在 MinGW 下无法编译（libstdc++ fs_path.h 的 Windows
+// 分支有 bug），这里只用 CRT 提供本文件需要的少数几个操作。
+bool pathExists(const std::string &path) {
+    struct _stat st;
+    return _stat(path.c_str(), &st) == 0;
+}
+
+bool isAbsolutePath(const std::string &path) {
+    return (path.size() >= 2 && path[1] == ':')
+        || (!path.empty() && (path[0] == '/' || path[0] == '\\'));
+}
+
+std::string joinPath(const std::string &dir, const std::string &file) {
+    if (dir.empty()) {
+        return file;
+    }
+    const char last = dir.back();
+    return (last == '/' || last == '\\') ? dir + file : dir + "/" + file;
+}
+
+bool ensureDirectory(const std::string &dir) {
+    // 逐级创建，等价于 std::filesystem::create_directories
+    for (std::size_t i = 1; i <= dir.size(); ++i) {
+        if (i == dir.size() || dir[i] == '/' || dir[i] == '\\') {
+            const std::string current = dir.substr(0, i);
+            const char last = current.back();
+            if (last != ':' && last != '/' && last != '\\') {
+                _mkdir(current.c_str()); // 已存在时返回 -1，忽略
+            }
+        }
+    }
+    struct _stat st;
+    return _stat(dir.c_str(), &st) == 0 && (st.st_mode & _S_IFDIR) != 0;
+}
 
 // ======================= 内存测量：全局分配器记账 =======================
 // 重载全局 operator new / delete，统计每一次 C++ 动态分配：
@@ -756,10 +793,8 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
     std::cout << "\n==================== " << group.title << " ====================\n";
     std::cout << "计时轮数 : " << group.rounds << "\n";
 
-    std::error_code errorCode;
-    std::filesystem::create_directories(group.outputDir, errorCode);
-    if (errorCode) {
-        std::cerr << "无法创建输出目录 " << group.outputDir << ": " << errorCode.message() << "\n";
+    if (!ensureDirectory(group.outputDir)) {
+        std::cerr << "无法创建输出目录 " << group.outputDir << "\n";
     }
 
     std::cout << std::left << std::setw(16) << "条件" << std::right;
@@ -884,7 +919,7 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
                               << std::setw(18) << check.differentFromReference << "\n";
 
                     const std::string imagePath =
-                        (std::filesystem::path(group.outputDir) / ("bench_" + std::string(benchmarks[i].name) + ".tga")).string();
+                        joinPath(group.outputDir, "bench_" + std::string(benchmarks[i].name) + ".tga");
                     anyImageFailed = !image->write_tga_file(imagePath, false) || anyImageFailed;
                 }
                 sampleMemory(); // 基准图 + 当前实现图的峰值时刻
@@ -894,8 +929,7 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
                 renderAll(benchmarkCase.triangles, image, triangle_3);
                 sampleMemory(); // 代表图已分配
 
-                const std::string imagePath =
-                    (std::filesystem::path(group.outputDir) / benchmarkCase.imageName).string();
+                const std::string imagePath = joinPath(group.outputDir, benchmarkCase.imageName);
                 anyImageFailed = !image.write_tga_file(imagePath, false) || anyImageFailed;
             }
         }
@@ -943,19 +977,18 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
 
 // 模型路径兜底：既支持在仓库根目录运行，也支持在 build/bin 下直接运行。
 std::string findModelPath(const std::string &requested) {
-    if (std::filesystem::exists(requested)) {
+    if (pathExists(requested)) {
         return requested;
     }
 
-    const std::filesystem::path requestedPath(requested);
-    if (requestedPath.is_absolute()) {
+    if (isAbsolutePath(requested)) {
         return {};
     }
 
     for (const char *prefix : {"../", "../../", "../../../"}) {
-        const std::filesystem::path candidate = std::filesystem::path(prefix) / requestedPath;
-        if (std::filesystem::exists(candidate)) {
-            return candidate.string();
+        const std::string candidate = std::string(prefix) + requested;
+        if (pathExists(candidate)) {
+            return candidate;
         }
     }
     return {};

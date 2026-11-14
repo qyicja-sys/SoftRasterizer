@@ -40,7 +40,15 @@
         "typeinfo": "cpp",
         "cstring": "cpp",
         "iostream": "cpp",
-        "ctime": "cpp"
+        "ctime": "cpp",
+        "chrono": "cpp",
+        "codecvt": "cpp",
+        "functional": "cpp",
+        "iterator": "cpp",
+        "numeric": "cpp",
+        "random": "cpp",
+        "ratio": "cpp",
+        "iomanip": "cpp"
     },
     // 与 tasks.json 中的 -B build 保持一致
     "cmake.sourceDirectory": "${workspaceFolder}",
