@@ -1,6 +1,7 @@
 #pragma once
 #include "matrix/matrix.h"
 #include "vec/Vec.h"
+#include "camera/camera.h"
 
 class modelView{
     private:
@@ -8,7 +9,7 @@ class modelView{
 
     public:
         modelView() : modelViewMatrix() {}
-        void lookat(Vec3 position, const Vec3 center, const Vec3 up);
+        void lookat(const camera& cam);
         mat<4,4,double> getModelViewMatrix() const;
 };
 
