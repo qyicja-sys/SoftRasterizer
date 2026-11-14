@@ -8,7 +8,7 @@
                 "${workspaceFolder}/src"
             ],
             "defines": [],
-            "compilerPath": "C:/mingw32/bin/gcc.exe",
+            "compilerPath": "C:/Users/ty1l/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
             "intelliSenseMode": "windows-gcc-x64",
             "cppStandard": "c++17",
             "cStandard": "c17"

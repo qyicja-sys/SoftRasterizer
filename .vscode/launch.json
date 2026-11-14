@@ -13,6 +13,9 @@
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
+            // 必须用与 GCC 16 配套的 GDB：PATH 里的 C:/MinGW-w64 是 GDB 8.1，
+            // 读不懂 GCC 16 的 DWARF 5 调试信息，会断点失效 / 调试会话卡住。
+            "miDebuggerPath": "C:/Users/ty1l/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gdb.exe",
             "setupCommands": [
                 {
                     "description": "为 gdb 启用美观打印",

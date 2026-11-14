@@ -15,7 +15,10 @@
                 // 本机没有安装 Visual Studio，CMake 的默认生成器会落到 NMake，
                 // 因找不到 nmake/cl.exe 而配置失败，必须显式指定 MinGW
                 "-G", "MinGW Makefiles",
-                "-DCMAKE_BUILD_TYPE=Debug"
+                "-DCMAKE_BUILD_TYPE=Debug",
+                // PATH 里 C:/MinGW-w64 排在前面，那是 GCC 8.1，其 <filesystem> 在 Windows 下无法编译。
+                // 显式指定 winget 安装的 WinLibs GCC 16，保证清空 build/ 后仍用新工具链。
+                "-DCMAKE_CXX_COMPILER=C:/Users/ty1l/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/g++.exe"
             ],
             "problemMatcher": []
         },
