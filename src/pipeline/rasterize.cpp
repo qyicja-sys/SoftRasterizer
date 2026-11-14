@@ -36,7 +36,7 @@ Vec4 rasterize::rasterizeGetClipVec(Vec4& vec){
 }
 
 void rasterize::rasterizeInit(camera& camera, int width, int height){
-    TGAmodelView.lookat(camera.getPosition(), camera.getCenter(), camera.getUp());
+    TGAmodelView.lookat(camera);
 
     TGAperspective.setCamera(camera);
     TGAperspective.perspectiveTransform(zBuffer, width, height);
