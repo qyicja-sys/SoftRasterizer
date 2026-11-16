@@ -106,4 +106,15 @@ class matrix{
         mat<4, 4, float> matrix_44(const mat<4, 4, float>& lhs, const mat<4, 4, float>& rhs1);
 
         float determinant();
+
+        // 平移矩阵 T：沿 x/y/z 平移 (tx, ty, tz)
+        static mat<4, 4, double> translate(double tx, double ty, double tz);
+
+        // 绕 x / y / z 轴的旋转矩阵，angle 为角度制
+        static mat<4, 4, double> rotationX(double angle);
+        static mat<4, 4, double> rotationY(double angle);
+        static mat<4, 4, double> rotationZ(double angle);
+
+        // 缩放矩阵 S：沿 x/y/z 缩放 (sx, sy, sz)
+        static mat<4, 4, double> scale(double sx, double sy, double sz);
 };

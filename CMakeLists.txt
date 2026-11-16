@@ -19,11 +19,14 @@ endif()
 # 4. 图像与帧缓冲相关的基础模块（TGA 读写）编译成静态库
 add_library(softrasterizer_core STATIC
     include/tgaimage.cpp      # TGA 图像读写实现
+    src/matrix/matrix.cpp     # 矩阵类：乘法、行列式与基本变换矩阵
 )
 
 # 5. 为库目标指定公开头文件路径
 #    PUBLIC 表示使用 softrasterizer_core 的目标也能访问该路径
 target_include_directories(softrasterizer_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+# matrix.cpp 使用 "matrix/matrix.h" 形式的包含，需要 src 作为搜索路径
+target_include_directories(softrasterizer_core PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # 6. 添加可执行文件目标
 add_executable(SoftRasterizer
