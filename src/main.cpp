@@ -496,6 +496,7 @@ int main(int argc, char** argv){
     newCamera.setPosition(Vec3(0, 0, 1));
     newCamera.setCenter(Vec3(0, 0, 0));
     newCamera.setUp(Vec3(0, 1, 0));
+    newCamera.setFov();
 
     newCamera.setRotation(Vec3(15, 0, 0));//这里保存的是旋转坐标
 
@@ -519,7 +520,11 @@ int main(int argc, char** argv){
                 zBuffer.setFarPlane(std::max(zBuffer.getFarPlane(),  z));
             }
         }
-        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer);
+        Vec3 position = {0,0,0};
+        Vec3 rotation = {0,0,0};
+        Vec3 scale = {1,1,1};
+        newModel.setModelMatrix(position, rotation, scale);
+        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer, newModel);
         TGArasterize.rasterizeInit(newCamera, width, height);
 
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
