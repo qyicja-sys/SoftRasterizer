@@ -24,6 +24,7 @@ class Model{
     std::vector<Vec3> vecList;
     // 所有三角形面，每个元素存 3 个顶点下标（已从 OBJ 的 1-based 转成 0-based）
     std::vector<std::array<int,3>> faceList;
+    mat<4,4,double> modelMatrix;
 
     public:
         // 解析 OBJ 文件；打不开、格式错误或索引越界都返回 false
@@ -35,4 +36,7 @@ class Model{
         // 按下标取顶点 / 面。内部用 vector::at，越界会抛 std::out_of_range。
         const Vec3& vert(int i) const;
         const std::array<int,3>& face(int i) const;
+
+        mat<4,4,double> getModelMatrix() const;
+        void setModelMatrix(Vec3 position, Vec3 rotation, Vec3 scale);
 };

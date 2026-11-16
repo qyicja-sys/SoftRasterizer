@@ -105,3 +105,15 @@ bool Model::load(const std::string& filename){
 
     return true;
 }
+
+mat<4,4,double> Model::getModelMatrix() const{
+    return modelMatrix;
+}
+
+void Model::setModelMatrix(Vec3 position, Vec3 rotation, Vec3 scale){
+    modelMatrix = matrix::translate(position.x, position.y, position.z)
+        * matrix::rotationX(rotation.x)
+        * matrix::rotationY(rotation.y)
+        * matrix::rotationZ(rotation.z)
+        * matrix::scale(scale.x, scale.y, scale.z);
+}
