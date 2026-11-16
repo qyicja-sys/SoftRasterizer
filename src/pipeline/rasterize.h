@@ -24,7 +24,7 @@ class rasterize{
         Vec4 rasterizeGetClipVec(Vec4& vec);
 
         void rasterizeInit(camera& camera, int width, int height);
-        void rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer);
+        void rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer, Model& model);
         void rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuffer, const TGAColor color);
         void rasterize_depthMap();
         void rasterize_updateZBuffer(ZBuffer& zBuffer);

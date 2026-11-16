@@ -36,7 +36,7 @@ Vec4 rasterize::rasterizeGetClipVec(Vec4& vec){
 }
 
 void rasterize::rasterizeInit(camera& camera, int width, int height){
-    TGAmodelView.lookat(camera);
+    TGAmodelView.lookat(camera, m);
 
     TGAperspective.setCamera(camera);
     TGAperspective.perspectiveTransform(zBuffer, width, height);
@@ -46,12 +46,13 @@ void rasterize::rasterizeInit(camera& camera, int width, int height){
     TGAviewPort.setViewPort(0, 0);
 }
 
-void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer){
+void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer, Model& model){
     this->TGAmodelView = modelView;
     this->TGAperspective = perspective;
     this->TGAclipper = clipper;
     this->TGAviewPort = viewPort;
     this->zBuffer = zBuffer;
+    this->m = model;
 }
 
 
