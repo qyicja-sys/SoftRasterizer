@@ -9,7 +9,7 @@ class modelView{
 
     public:
         modelView() : modelViewMatrix() {}
-        void lookat(const camera& cam);
+        void lookat(const camera& cam, Model& model);
         mat<4,4,double> getModelViewMatrix() const;
 };
 
