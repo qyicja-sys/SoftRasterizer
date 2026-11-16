@@ -7,6 +7,7 @@ class camera{
     private:
         //投影属性
         float focalLength;
+        double fov;//FOV 视度
         int width, height;
 
         //摄像机属性
@@ -24,6 +25,7 @@ class camera{
         //获取方向
         Vec3 getDirection(int x, int y) const;
         Vec3 getPosition() const;
+        double getFov() const;//获取FOV 视度
         Vec3 getRotation() const;
         mat<3, 3, double> getRotationMatrix() const;
         Vec3 getCenter() const;
@@ -35,6 +37,7 @@ class camera{
         //设置属性(位置、旋转、焦距、视口大小)
         void setPosition(Vec3 position);
         void setRotation(Vec3 rotation);
+        void setFov();//设置FOV 视度
         void setCenter(Vec3 center);
         void setUp(Vec3 up);
         void setUp(Vec3 up, Vec3 center);

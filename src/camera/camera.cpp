@@ -1,5 +1,6 @@
 #include "camera/camera.h"
 #include "matrix/matrix.h"
+#include <cmath>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -43,6 +44,10 @@ float camera::getFocalLength() const{
     return focalLength;
 }
 
+double camera::getFov() const{
+    return fov;
+}
+
 int camera::getWidth() const{
     return width;
 }
@@ -75,6 +80,10 @@ void camera::setPosition(Vec3 position){
     this->position = position;
 }
 
+void camera::setFov(){
+    this->fov = 2*std::atan(height/2.0/focalLength);
+}
+
 void camera::setCenter(Vec3 center){
     this->center = center;
 }
@@ -100,6 +109,7 @@ void camera::setRotation(Vec3 rotation){
 
 void camera::setFocalLength(float focalLength){
     this->focalLength = focalLength;
+    setFov();
 }
 
 void camera::setViewport(int width, int height){
