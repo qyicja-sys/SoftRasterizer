@@ -7,7 +7,7 @@ class viewPort{
         int width, height;
     public:
         viewPort() : viewPortMatrix() {}
-        void setViewPort(const int x,const int y);
+        void setViewPort();
         mat<4,4,double> getViewPortMatrix() const;
 
         int getWidth() const;

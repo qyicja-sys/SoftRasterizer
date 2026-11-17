@@ -1,8 +1,8 @@
 #include "viewPort.h"
 #include "matrix/matrix.h"
 
-void viewPort::setViewPort(const int x,const int y){
-    viewPortMatrix = mat<4,4,double>{{width/2.0,0,0,x+width/2.0}, {0,-height/2.0f,0,y+height/2.0f}, {0,0,1,0}, {0,0,0,1}};
+void viewPort::setViewPort(){
+    viewPortMatrix = mat<4,4,double>{{width/2.0,0,0,width/2.0}, {0,-height/2.0f,0,height/2.0f}, {0,0,0.5f,0.5f}, {0,0,0,1}};
     // ================= 坐标映射：模型空间 → 屏幕空间 =================
                 // 两套坐标系不一样：
                 //   模型坐标：原点在模型中心，x 向右，y 向上，范围约 [-1, 1]；
