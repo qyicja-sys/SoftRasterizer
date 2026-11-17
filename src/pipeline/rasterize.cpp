@@ -20,7 +20,10 @@ static int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
 }
 
 //计算三角形有向面积(平行四边形，需要除以二，这里没有除是方便其它使用)
-static double signed_triangle_area(int x, int y, int bx, int by, int cx, int cy) {
+// 参数必须用 double：屏幕坐标是 double，若用 int 会截断，
+// 边长不足 1 像素的细长三角形截断后三点重合，面积为 0，
+// 重心坐标出现 0/0=NaN，深度被强转成 0，表现为深度图上的白色噪点。
+static double signed_triangle_area(double x, double y, double bx, double by, double cx, double cy) {
     return .5*((by-y)*(bx+x) + (cy-by)*(cx+bx) + (y-cy)*(x+cx));
 }
 
@@ -100,6 +103,42 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
                 std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));
             if(!zBuffer.testAndSet(x, y, z)) continue;
             framebuffer.set(x, y, color);
+        }
+    }
+}
+
+void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
+    // TODO: 实现深度映射
+    mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
+    Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
+    Vec2 screen[3] = {(viewPort * ndc[0]).getScreenCoord(), (viewPort * ndc[1]).getScreenCoord(), (viewPort * ndc[2]).getScreenCoord()};
+
+    mat<3,3> ABC = {{ {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} }};
+    if (std::abs(ABC.determinant()) < 1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+
+    auto [bbminx,bbmaxx] = std::minmax({screen[0].x, screen[1].x, screen[2].x}); // 三角形的包围盒
+    auto [bbminy,bbmaxy] = std::minmax({screen[0].y, screen[1].y, screen[2].y}); // 由左上角和右下角定义
+
+    double triangle_area = signed_triangle_area(screen[0].x, screen[0].y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
+
+#pragma omp parallel for
+    for (int x=bbminx; x<=bbmaxx; x++) {
+        for (int y=bbminy; y<=bbmaxy; y++) {
+            double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
+            double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
+            double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
+            const double eps = 1e-2 ;
+            if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
+            double N = zBuffer.getNearPlane();
+            double F = zBuffer.getFarPlane();
+            double A = (N+F)/(F-N);
+            double B = -2*N*F/(F-N);
+            double invW = alpha / clip[ 0 ].w + beta / clip[ 1 ].w + gamma / clip[ 2 ].w;
+            double ndcZ = A + B * invW;
+            unsigned char z = static_cast < unsigned char >(
+                std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));
+            if(!zBuffer.testAndSet(x, y, z)) continue;
+            zMap.set(x, y,  {static_cast<uint8_t>(255 - z)});
         }
     }
 }

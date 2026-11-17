@@ -32,7 +32,7 @@ class rasterize{
         mat<4,4,double> getModelViewMatrix() const;
 
         void rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuffer, const TGAColor color);
-        void rasterize_depthMap();
+        void rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap);
         void rasterize_updateZBuffer(ZBuffer& zBuffer);
         void rasterize_updatePerspective();
 

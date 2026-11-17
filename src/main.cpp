@@ -562,6 +562,7 @@ int main(int argc, char** argv){
                 TGAColor rnd = red;
                 for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
                 TGArasterize.rasterize_colorMap(ready_rasterize_face[i], framebuffer, rnd);
+                //TGArasterize.rasterize_depthMap(ready_rasterize_face[i], zMap);
             }
         }
 
