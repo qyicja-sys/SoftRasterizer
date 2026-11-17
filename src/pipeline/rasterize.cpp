@@ -43,7 +43,7 @@ void rasterize::rasterizeInit(camera& camera, int width, int height){
     
     TGAviewPort.setWidth(width);
     TGAviewPort.setHeight(height);
-    TGAviewPort.setViewPort(0, 0);
+    TGAviewPort.setViewPort();
 }
 
 void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer, Model& model){
@@ -55,6 +55,15 @@ void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipp
     this->m = model;
 }
 
+//单独初始化modelView
+void rasterize::initModelView(camera& camera, Model& model){
+    TGAmodelView.lookat(camera, model);
+}
+
+//获取modelView矩阵
+mat<4,4,double> rasterize::getModelViewMatrix() const{
+    return TGAmodelView.getModelViewMatrix();
+}
 
 
 void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuffer, const TGAColor color){

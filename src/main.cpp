@@ -513,18 +513,23 @@ int main(int argc, char** argv){
         // 统计模型在相机空间的深度范围，用于把深度归一化到 [0,254]。
         // 相机空间 z 本身只有 1.2~2.8 这种小范围，直接转 unsigned char 会被截断成 1/2，
         // 深度图就只剩两三个灰度级，看起来“不对”。
-        for (int i = 0; i < newModel.nverts(); i++) {
-            float z = newCamera.worldToCamera(newModel.vert(i)).z;
-            if (z > 0) {
-                zBuffer.setNearPlane(std::min(zBuffer.getNearPlane(), z));
-                zBuffer.setFarPlane(std::max(zBuffer.getFarPlane(),  z));
-            }
-        }
         Vec3 position = {0,0,0};
         Vec3 rotation = {0,0,0};
         Vec3 scale = {1,1,1};
         newModel.setModelMatrix(position, rotation, scale);
-        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer, newModel);
+        newModel.setModelMatrix(position, rotation, scale);
+        newModelView.lookat(newCamera, newModel);          // 让 newModelView 真正算出来
+
+        mat<4,4,double> mv = newModelView.getModelViewMatrix();   // 提到循环外
+        for (int i = 0; i < newModel.nverts(); i++) {
+            float z = (mv * newModel.vert(i).toVec4()).z;
+            if (z > 0) {
+                zBuffer.setNearPlane(std::min(zBuffer.getNearPlane(), z));
+                zBuffer.setFarPlane (std::max(zBuffer.getFarPlane(),  z));
+            }
+        }
+
+        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer, newModel);  // zBuffer 此时已是有效值
         TGArasterize.rasterizeInit(newCamera, width, height);
 
         // 遍历模型里的每个三角形面（本模型共 5022 个）。
