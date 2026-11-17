@@ -50,9 +50,22 @@ bool ZBuffer::testAndSet(int x, int y, unsigned char depth){
     if(x < 0 || x >= width || y < 0 || y >= height){
         return false;
     }
-    if(depth >= zBuffer[y * width + x]){
-        return false;
+    // if(depth >= zBuffer[y * width + x]){
+    //     return false;
+    // }
+    // zBuffer[y * width + x] = depth;
+    // return true;
+    // 光栅化循环用 OpenMP 并行执行，多个三角形对应的线程可能同时命中同一像素。
+    // 普通“读-比较-写”会让两个线程都通过 depth < old 检查后互相覆盖，
+    // 深度图/颜色图就会出现错乱的噪点。这里用原子 compare-exchange
+    // 一次性完成比较与写入：只有 depth 严格小于当前值时才能写入。
+    unsigned char* slot = &zBuffer[y * width + x];
+    unsigned char old = __atomic_load_n(slot, __ATOMIC_RELAXED);
+    while(depth < old){
+        if(__atomic_compare_exchange_n(slot, &old, depth, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)){
+            return true;
+        }
+        // CAS 失败时 old 已被更新为槽位当前值，回到循环重新比较
     }
-    zBuffer[y * width + x] = depth;
-    return true;
+    return false;
 }
