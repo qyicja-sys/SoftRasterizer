@@ -39,29 +39,29 @@ static int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
 //   垂直边 dx == 0：E = (X-Px)(Ay-By)，内部在右侧(Px>X)要求 dy > 0  => left edge
 // 因此 top-left 的正确条件应是 dy > 0 或 (dy == 0 && dx < 0)，与常见 y 向上写法相反。
 bool isTopLeft(Vec2& A, Vec2& B){
-    float dx = B.x - A.x;
-    float dy = B.y - A.y;
+    double dx = B.x - A.x;
+    double dy = B.y - A.y;
     return (dy < 0) || (dy == 0 && dx > 0);
 }
 
 //判断点是否在边内
 bool insideEdge(double E, bool topLeft)
 {
-    // if (E < 0)
-    //     return false;
+    if (E < 0)
+        return false;
 
-    // if (topLeft){
-    //     if(E>=0)
-    //         return true;
-    //     else
-    //         return false;
-    // }else{
-    //     if (E > 0)
-    //         return true;
-    // }
+    if (topLeft){
+        if(E>=0)
+            return true;
+        else
+            return false;
+    }else{
+        if (E > 0)
+            return true;
+    }
 
-    // return topLeft;
-    return (E > 0) || (E == 0 && topLeft);
+    return topLeft;
+    //return (E > 0) || (E == 0 && topLeft);
 }
 
 Vec4 rasterize::rasterizeGetClipVec(Vec4& vec){
@@ -108,9 +108,17 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
     mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
     Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
     Vec2 screen[3] = {(viewPort * ndc[0]).getScreenCoord(), (viewPort * ndc[1]).getScreenCoord(), (viewPort * ndc[2]).getScreenCoord()};
+    double w[3] = {clip[0].w, clip[1].w, clip[2].w};
 
     mat<3,3> ABC = {{ {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} }};
-    if (std::abs(ABC.determinant()) < 1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+    // 背面剔除：屏幕 y 轴向下，模型正面在屏幕上呈顺时针，对应 determinant < 0，
+    // determinant > 0 的是背面，直接丢弃。
+    if (ABC.determinant() > -1) return;
+
+    // 统一绕向：交换 s1、s2 后，正面三角形在屏幕空间变为逆时针（内部点 E > 0），
+    // insideEdge 的 E > 0 判断和 top-left 规则才能对正面生效。
+    std::swap(screen[1], screen[2]);
+    std::swap(w[1], w[2]);
 
     auto [bbminx,bbmaxx] = std::minmax({screen[0].x, screen[1].x, screen[2].x}); // 三角形的包围盒
     auto [bbminy,bbmaxy] = std::minmax({screen[0].y, screen[1].y, screen[2].y}); // 由左上角和右下角定义
@@ -141,7 +149,7 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
             double F = zBuffer.getFarPlane();
             double A = (N+F)/(F-N);
             double B = -2*N*F/(F-N);
-            double invW = alpha / clip[ 0 ].w + beta / clip[ 1 ].w + gamma / clip[ 2 ].w;
+            double invW = alpha / w[0] + beta / w[1] + gamma / w[2];
             double ndcZ = A + B * invW;
             unsigned char z = static_cast < unsigned char >(
                 std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));
@@ -156,9 +164,17 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
     mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
     Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
     Vec2 screen[3] = {(viewPort * ndc[0]).getScreenCoord(), (viewPort * ndc[1]).getScreenCoord(), (viewPort * ndc[2]).getScreenCoord()};
+    double w[3] = {clip[0].w, clip[1].w, clip[2].w};
 
     mat<3,3> ABC = {{ {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} }};
-    if (std::abs(ABC.determinant()) < 1) return; // 背面剔除 + 丢弃覆盖面积不足一个像素的三角形
+    // 背面剔除：屏幕 y 轴向下，模型正面在屏幕上呈顺时针，对应 determinant < 0，
+    // determinant > 0 的是背面，直接丢弃。
+    if (ABC.determinant() > -1) return;
+
+    // 统一绕向：交换 s1、s2 后，正面三角形在屏幕空间变为逆时针（内部点 E > 0），
+    // insideEdge 的 E > 0 判断和 top-left 规则才能对正面生效。
+    std::swap(screen[1], screen[2]);
+    std::swap(w[1], w[2]);
 
     auto [bbminx,bbmaxx] = std::minmax({screen[0].x, screen[1].x, screen[2].x}); // 三角形的包围盒
     auto [bbminy,bbmaxy] = std::minmax({screen[0].y, screen[1].y, screen[2].y}); // 由左上角和右下角定义
@@ -190,8 +206,8 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
             //构建深度映射系数A和B，用于转换1/w为NDC Z
             double A = (N+F)/(F-N);
             double B = -2*N*F/(F-N);
-            //利用重心插值计算插值1/w，获取当前像素的深度信息
-            double invW = alpha / clip[ 0 ].w + beta / clip[ 1 ].w + gamma / clip[ 2 ].w;
+            //利用重心插值计算插值1/w，获取当前像素的深度信息（w 已随顶点交换同步）
+            double invW = alpha / w[0] + beta / w[1] + gamma / w[2];
             //计算当前像素的NDC Z
             double ndcZ = A + B * invW;
             //映射深度值
