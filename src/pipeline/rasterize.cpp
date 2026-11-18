@@ -14,8 +14,7 @@
 #include <cmath>
 
 //计算边函数
-// main.cpp 里也有同名函数，这里加 static 限定为本编译单元内部链接，避免重复定义
-static int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
+double line_function(double Ax, double Ay, double Bx, double By, double x, double y) {
     return (Bx - Ax) * (y - Ay) - (By - Ay) * (x - Ax);
 }
 
@@ -30,6 +29,39 @@ static double signed_triangle_area(double x, double y, double bx, double by, dou
 //三个点的叉积计算
 static int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
     return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
+}
+
+//判断边是否为顶部左侧
+// 注意：屏幕坐标原点在左上角、y 轴向下；且 line_function 调用时把 (x,y) 放在了前两位，
+// 使边函数符号与常规 cross(B-A, P-A) 相反（三角形内部点满足 E > 0，见 insideEdge）。
+// 在该符号约定下推导：
+//   水平边 dy == 0：E = (Y-Py)(Bx-Ax)，内部在下方(Py>Y)要求 dx < 0  => top edge
+//   垂直边 dx == 0：E = (X-Px)(Ay-By)，内部在右侧(Px>X)要求 dy > 0  => left edge
+// 因此 top-left 的正确条件应是 dy > 0 或 (dy == 0 && dx < 0)，与常见 y 向上写法相反。
+bool isTopLeft(Vec2& A, Vec2& B){
+    float dx = B.x - A.x;
+    float dy = B.y - A.y;
+    return (dy < 0) || (dy == 0 && dx > 0);
+}
+
+//判断点是否在边内
+bool insideEdge(double E, bool topLeft)
+{
+    // if (E < 0)
+    //     return false;
+
+    // if (topLeft){
+    //     if(E>=0)
+    //         return true;
+    //     else
+    //         return false;
+    // }else{
+    //     if (E > 0)
+    //         return true;
+    // }
+
+    // return topLeft;
+    return (E > 0) || (E == 0 && topLeft);
 }
 
 Vec4 rasterize::rasterizeGetClipVec(Vec4& vec){
@@ -85,14 +117,26 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
 
     double triangle_area = signed_triangle_area(screen[0].x, screen[0].y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
 
+    bool istopleft1 = isTopLeft(screen[0], screen[1]);
+    bool istopleft2 = isTopLeft(screen[1], screen[2]);
+    bool istopleft3 = isTopLeft(screen[2], screen[0]);
+
 #pragma omp parallel for
     for (int x=bbminx; x<=bbmaxx; x++) {
         for (int y=bbminy; y<=bbmaxy; y++) {
+            double E0 = line_function(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y);
+            double E1 = line_function(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
+            double E2 = line_function(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y);
+            bool flag = insideEdge(E0, istopleft1) &&
+            insideEdge(E1, istopleft2) &&
+            insideEdge(E2, istopleft3);
+            if (!flag) continue;
+
             double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
             double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
             double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
-            const double eps = 1e-2 ;
-            if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
+            // const double eps = 1e-2 ;
+            // if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
             double A = (N+F)/(F-N);
@@ -121,14 +165,26 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
 
     double triangle_area = signed_triangle_area(screen[0].x, screen[0].y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
 
+    bool istopleft1 = isTopLeft(screen[0], screen[1]);
+    bool istopleft2 = isTopLeft(screen[1], screen[2]);
+    bool istopleft3 = isTopLeft(screen[2], screen[0]);
+
 #pragma omp parallel for
     for (int x=bbminx; x<=bbmaxx; x++) {
         for (int y=bbminy; y<=bbmaxy; y++) {
+            double E0 = line_function(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y);
+            double E1 = line_function(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y);
+            double E2 = line_function(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y);
+            bool flag = insideEdge(E0, istopleft1) &&
+            insideEdge(E1, istopleft2) &&
+            insideEdge(E2, istopleft3);
+            if (!flag) continue;
+
             double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
             double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
             double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
-            const double eps = 1e-2 ;
-            if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
+            // const double eps = 1e-2 ;
+            // if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
             //构建深度映射系数A和B，用于转换1/w为NDC Z
@@ -143,7 +199,16 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
             unsigned char z = static_cast < unsigned char >(
                 std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));//将范围从[-1,1]->[0,2]->[0,1]->[0,254]
             if(!zBuffer.testAndSet(x, y, z)) continue;
-            zMap.set(x, y,  {static_cast<uint8_t>(255 - z)});
+            // 深度图改用“线性相机空间深度”可视化：
+            // NDC z 在透视投影下是非线性的，精度几乎都集中在近平面附近，
+            // 直接映射会让模型大部分表面挤在黑色一端，与背景分不清。
+            // 这里对插值出的 1/w 取倒数得到相机空间 z（w = z_cam），
+            // 再在 [N,F] 上线性映射：近处亮、远处暗。
+            double zCam = 1.0 / invW;
+            double t = (zCam - N) / (F - N);
+            // 映射到 [1,254]，避免最远表面(0)与黑色背景完全同色
+            uint8_t gray = static_cast<uint8_t>(std::clamp(1.0 + (1.0 - t) * 253.0, 1.0, 254.0));
+            zMap.set(x, y, {gray});
         }
     }
 }
