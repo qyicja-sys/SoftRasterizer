@@ -14,6 +14,11 @@
 #include "pipeline/clipper.h"
 #include "pipeline/viewport.h"
 #include "pipeline/rasterize.h"
+#include "video/videoWriter.h"
+#include <filesystem>
+#include <limits>
+#include <string>
+#include <exception>
 
 
 
@@ -25,10 +30,10 @@ constexpr TGAColor red    = {  0,   0, 255, 255};
 constexpr TGAColor blue   = {255, 128,  64, 255};
 constexpr TGAColor yellow = {  0, 200, 255, 255};
 
-// 画布（帧缓冲）尺寸：800×800 像素。
-// 下面的坐标映射会用到 width/2 和 height/2，改分辨率只需要改这两个常量。
-constexpr int width  = 1024;
-constexpr int height = 1024;
+// 画布（帧缓冲）尺寸。现在由命令行参数决定，因此不再用 constexpr：
+// 程序启动时会按视频配置重新给它们赋值，并重建 ZBuffer。
+int width  = 1024;
+int height = 1024;
 ZBuffer zBuffer(width, height);
 
 
@@ -473,23 +478,209 @@ void triangle_6_grey_scale_Map(int ax, int ay, int bx, int by, int cx, int cy, f
     }
 }
 
+// 视频画面模式
+enum class OutputMode {
+    DepthOnly,    // 只输出深度图
+    ColorOnly,    // 只输出颜色图
+    SideBySide,   // 左颜色、右深度
+    TopBottom     // 上颜色、下深度
+};
+
+// 由面下标生成稳定的颜色：同一个三角形每帧颜色相同，视频不会闪烁
+TGAColor faceColor(int faceIndex) {
+    const std::uint32_t hash = static_cast<std::uint32_t>(faceIndex) * 2654435761u;
+    return TGAColor{
+        static_cast<std::uint8_t>(64 + (hash & 0xBF)),
+        static_cast<std::uint8_t>(64 + ((hash >> 8) & 0xBF)),
+        static_cast<std::uint8_t>(64 + ((hash >> 16) & 0xBF)),
+        255};
+}
+
+// 把颜色图和深度图按模式合成一帧；深度图是灰度，写入 RGB 帧时复制到三个通道
+TGAImage composeFrame(const TGAImage& colorMap, const TGAImage& depthMap, OutputMode mode) {
+    if (mode == OutputMode::ColorOnly) return colorMap;
+    if (mode == OutputMode::DepthOnly) return depthMap;
+
+    const bool sideBySide = (mode == OutputMode::SideBySide);
+    const int outWidth   = sideBySide ? colorMap.width() * 2 : colorMap.width();
+    const int outHeight  = sideBySide ? colorMap.height() : colorMap.height() * 2;
+    const int depthOffsetX = sideBySide ? colorMap.width() : 0;
+    const int depthOffsetY = sideBySide ? 0 : colorMap.height();
+
+    TGAImage frame(outWidth, outHeight, TGAImage::RGB);
+    for (int y = 0; y < colorMap.height(); ++y) {
+        for (int x = 0; x < colorMap.width(); ++x) {
+            frame.set(x, y, colorMap.get(x, y));
+            const TGAColor gray = depthMap.get(x, y);
+            frame.set(x + depthOffsetX, y + depthOffsetY,
+                      TGAColor{gray[0], gray[0], gray[0], 255});
+        }
+    }
+    return frame;
+}
+
+// 渲染一帧：更新模型矩阵、重算相机空间近远平面，然后光栅化所有三角形。
+// 颜色图和深度图使用各自独立的 rasterize / ZBuffer，避免共用深度缓冲时
+// 第二个 pass 被第一个 pass 写入的深度全部拒绝。
+void renderFrame(Model& model, camera& cam,
+                 rasterize& colorRasterizer, rasterize& depthRasterizer,
+                 modelView& mvNode, perspective& persp, clipper& clipNode,
+                 viewPort& viewportNode,
+                 ZBuffer& colorZBuffer, ZBuffer& depthZBuffer,
+                 const Vec3& position, const Vec3& rotation, const Vec3& scale,
+                 bool needColor, bool needDepth,
+                 TGAImage& colorMap, TGAImage& depthMap) {
+    model.setModelMatrix(position, rotation, scale);
+    mvNode.lookat(cam, model);
+
+    // 每帧都要重新统计相机空间 z 范围：模型旋转后最近/最远点会变化，
+    // 沿用固定值会让透视深度映射失准。
+    float nearPlane = std::numeric_limits<float>::max();
+    float farPlane = 0;
+    const mat<4,4,double> mv = mvNode.getModelViewMatrix();
+    for (int i = 0; i < model.nverts(); ++i) {
+        float z = (mv * model.vert(i).toVec4()).z;
+        if (z > 0) {
+            nearPlane = std::min(nearPlane, z);
+            farPlane  = std::max(farPlane,  z);
+        }
+    }
+
+    // 两个深度缓冲都清空并设置相同的近远平面
+    colorZBuffer.clear();
+    colorZBuffer.setNearPlane(nearPlane);
+    colorZBuffer.setFarPlane(farPlane);
+    depthZBuffer.clear();
+    depthZBuffer.setNearPlane(nearPlane);
+    depthZBuffer.setFarPlane(farPlane);
+
+    colorRasterizer.rasterizeSet(mvNode, persp, clipNode, viewportNode, colorZBuffer, model);
+    colorRasterizer.rasterizeInit(cam, width, height);
+    depthRasterizer.rasterizeSet(mvNode, persp, clipNode, viewportNode, depthZBuffer, model);
+    depthRasterizer.rasterizeInit(cam, width, height);
+
+    // 每帧重新分配并刷黑，避免上一帧的像素残留
+    colorMap = TGAImage(width, height, TGAImage::RGB);
+    depthMap = TGAImage(width, height, TGAImage::GRAYSCALE);
+
+    // 遍历模型里的每个三角形面（本模型共 5022 个）。
+    // face(i) 返回的是 3 个“顶点下标”，不是坐标；
+    // 必须再用 vert(下标) 查表，才能拿到真正的 3D 坐标。
+    for (int i = 0; i < model.nfaces(); ++i) {
+        const std::array<int,3> modelFace = model.face(i);
+
+        std::vector<Vec4> clipVertices;
+        clipVertices.reserve(3);
+        for (int j = 0; j < 3; ++j) {
+            Vec4 nowVec4 = model.vert(modelFace.at(j)).toVec4();
+            clipVertices.push_back(depthRasterizer.rasterizeGetClipVec(nowVec4));
+        }
+
+        clipper clipPolygon;
+        clipPolygon.isClipped(clipVertices);
+        vector<vector<Vec4>> readyRasterizeFace = clipPolygon.triangulation();
+
+        const TGAColor color = faceColor(i);
+        for (size_t k = 0; k < readyRasterizeFace.size(); ++k) {
+            if (needColor) {
+                colorRasterizer.rasterize_colorMap(readyRasterizeFace[k], colorMap, color);
+            }
+            if (needDepth) {
+                depthRasterizer.rasterize_depthMap(readyRasterizeFace[k], depthMap);
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv){
-    // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
-    // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
-    TGAImage framebuffer(width, height, TGAImage::RGB);
-    TGAImage zMap(width, height, TGAImage::GRAYSCALE);
+    // ---------- 视频配置：默认值可被命令行参数覆盖 ----------
+    // 用法示例：
+    //   SoftRasterizer.exe --width 800 --height 800 --fps 30 --duration 5
+    VideoWriter::Config videoConfig;
+    videoConfig.outputPath = "out/diablo3_pose_turntable.mp4";
+    OutputMode mode = OutputMode::DepthOnly;
 
-    zBuffer.clear();
-    zBuffer.setNearPlane(std::numeric_limits< float >:: max ());
-    zBuffer.setFarPlane(0);
+    // 优先使用项目内下载的 ffmpeg；不存在时回退到系统 PATH 里的 ffmpeg
+    if (std::filesystem::exists("tools/ffmpeg/bin/ffmpeg.exe")) {
+        videoConfig.ffmpegPath = "tools/ffmpeg/bin/ffmpeg.exe";
+    }
 
-    rasterize TGArasterize;
+    try {
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            const bool hasValue = (i + 1 < argc);
+            if (arg == "--fps" && hasValue) {
+                videoConfig.fps = std::stoi(argv[++i]);
+            } else if (arg == "--width" && hasValue) {
+                videoConfig.width = std::stoi(argv[++i]);
+            } else if (arg == "--height" && hasValue) {
+                videoConfig.height = std::stoi(argv[++i]);
+            } else if (arg == "--duration" && hasValue) {
+                videoConfig.durationSeconds = std::stod(argv[++i]);
+            } else if (arg == "--output" && hasValue) {
+                videoConfig.outputPath = argv[++i];
+            } else if (arg == "--ffmpeg" && hasValue) {
+                videoConfig.ffmpegPath = argv[++i];
+            } else if (arg == "--mode" && hasValue) {
+                const std::string value = argv[++i];
+                if (value == "depth") {
+                    mode = OutputMode::DepthOnly;
+                } else if (value == "color") {
+                    mode = OutputMode::ColorOnly;
+                } else if (value == "side") {
+                    mode = OutputMode::SideBySide;
+                } else if (value == "top") {
+                    mode = OutputMode::TopBottom;
+                } else {
+                    std::cerr << "未知模式：" << value
+                              << "，可选 depth / color / side / top" << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "未知参数：" << arg << "\n"
+                          << "可用参数：--mode depth|color|side|top --fps N --width N --height N "
+                          << "--duration 秒 --output 文件 --ffmpeg 路径"
+                          << std::endl;
+                return 1;
+            }
+        }
+    } catch (const std::exception& error) {
+        std::cerr << "参数解析失败：" << error.what()
+                  << "\n请检查 --width/--height/--fps/--duration 是否为正整数或小数。" << std::endl;
+        return 1;
+    }
+
+    // 渲染分辨率由 --width/--height 决定；拼接模式会让最终视频尺寸翻倍
+    const int renderWidth  = videoConfig.width;
+    const int renderHeight = videoConfig.height;
+    if (mode == OutputMode::SideBySide) videoConfig.width  *= 2;
+    if (mode == OutputMode::TopBottom)  videoConfig.height *= 2;
+
+    width  = renderWidth;
+    height = renderHeight;
+    zBuffer = ZBuffer(width, height);
+
+    // 颜色图和深度图是两张独立的图像
+    TGAImage colorMap(width, height, TGAImage::RGB);
+    TGAImage depthMap(width, height, TGAImage::GRAYSCALE);
+
+    // 颜色和深度各用一个独立的深度缓冲，否则两个 pass 会互相拒绝对方的像素
+    ZBuffer colorZBuffer(width, height);
+    ZBuffer depthZBuffer(width, height);
+
+    rasterize colorRasterizer;
+    rasterize depthRasterizer;
     modelView newModelView;
     perspective newPerspective;
     clipper newClipper;
     viewPort newViewport;
 
     camera newCamera(500, width, height);
+    // 分辨率只改变像素密度，不改变构图：
+    // fov 由 focalLength 和画面高度共同决定，若固定 focalLength，
+    // 降低分辨率会收窄视野、把模型放大出画面。
+    // 这里以 1024 高度为基准等比缩放焦距，保证不同分辨率下看到相同的范围。
+    newCamera.setFocalLength(500.0f * height / 1024.0f);
     // 相机必须在模型前方：worldToCamera 里 z 取反后，要求 position.z > 模型最大 z。
     // 放在原点等于站在模型内部，一半顶点 z_cam <= 0 被判为无效，
     // 另一半 z_cam 趋近 0，透视除法后坐标放大到屏幕外，最终仍是一片黑。
@@ -498,85 +689,64 @@ int main(int argc, char** argv){
     newCamera.setUp(Vec3(0, 1, 0));
     newCamera.setFov();
 
-    newCamera.setRotation(Vec3(15, 0, 0));//这里保存的是旋转坐标
+    newCamera.setRotation(Vec3(0, 0, 0));//这里保存的是旋转坐标
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
     Model newModel;
     bool flag = newModel.load("obj/diablo3_pose.obj");
-    if(flag){
-        // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
-        Vec3 firstVect = newModel.vert(0);
-        std::cout << "第一个顶点：" << firstVect.x << " " << firstVect.y <<  " " << firstVect.z << std::endl;
-
-        // 统计模型在相机空间的深度范围，用于把深度归一化到 [0,254]。
-        // 相机空间 z 本身只有 1.2~2.8 这种小范围，直接转 unsigned char 会被截断成 1/2，
-        // 深度图就只剩两三个灰度级，看起来“不对”。
-        Vec3 position = {0,0,0};
-        Vec3 rotation = {0,0,0};
-        Vec3 scale = {1,1,1};
-        newModel.setModelMatrix(position, rotation, scale);
-        newModel.setModelMatrix(position, rotation, scale);
-        newModelView.lookat(newCamera, newModel);          // 让 newModelView 真正算出来
-
-        mat<4,4,double> mv = newModelView.getModelViewMatrix();   // 提到循环外
-        for (int i = 0; i < newModel.nverts(); i++) {
-            float z = (mv * newModel.vert(i).toVec4()).z;
-            if (z > 0) {
-                zBuffer.setNearPlane(std::min(zBuffer.getNearPlane(), z));
-                zBuffer.setFarPlane (std::max(zBuffer.getFarPlane(),  z));
-            }
-        }
-
-        TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer, newModel);  // zBuffer 此时已是有效值
-        TGArasterize.rasterizeInit(newCamera, width, height);
-
-        // 遍历模型里的每个三角形面（本模型共 5022 个）。
-        // face(i) 返回的是 3 个“顶点下标”，不是坐标；
-        // 必须再用 vert(下标) 查表，才能拿到真正的 3D 坐标。
-        for(int i=0;i<newModel.nfaces();i++){
-            bool faceValid = true;
-            const std::array<int,3> modelFace = newModel.face(i);// 第 i 个面的 3 个顶点下标
-
-            // 先收集这个三角形的 3 个屏幕点，再统一画线。
-            // 这里创建空 vector 后 push 三次；不能写成 vector(3) 再 push，
-            // 那样会先得到 3 个默认元素，再加 3 个新元素，共 6 个。
-            std::vector<Vec4> clip;
-            clip.reserve(3);
-
-            // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
-            for(int j = 0;j<3;j++){
-                Vec3 nowVec = newModel.vert(modelFace.at(j));// 模型空间中的 3D 顶点
-                //Vec3 camPos = newCamera.worldToCamera(nowVec);   // z 取反，得到 1.19~2.81
-                Vec4 nowVec4 = nowVec.toVec4();
-                clip.push_back(TGArasterize.rasterizeGetClipVec(nowVec4));
-            }
-            clipper clipPolygon;
-            clipPolygon.isClipped(clip);
-            vector<vector<Vec4>> ready_rasterize_face = clipPolygon.triangulation();
-            
-            
-            // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
-            for(int i=0;i<ready_rasterize_face.size();i++){
-                TGAColor rnd = red;
-                for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-                TGArasterize.rasterize_colorMap(ready_rasterize_face[i], framebuffer, rnd);
-                //TGArasterize.rasterize_depthMap(ready_rasterize_face[i], zMap);
-            }
-        }
-
-        // 输出 TGA。第二个参数 vflip 必须显式传 false：
-        // write_tga_file 默认 vflip=true，会把文件头声明成“左下角为原点”，
-        // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
-        // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
-        // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        //zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
-        zBuffer.clear();
-    }else{
+    if(!flag){
         std::cerr << "模型加载失败" << std::endl;
+        return 1;
     }
+
+    // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
+    Vec3 firstVect = newModel.vert(0);
+    std::cout << "第一个顶点：" << firstVect.x << " " << firstVect.y <<  " " << firstVect.z << std::endl;
+
+    VideoWriter writer(videoConfig);
+    if (!writer.open()) {
+        return 1;
+    }
+
+    // 模型绕 Y 轴匀速旋转整整一圈，总帧数决定每帧角度，首尾可无缝循环
+    const bool needColor = (mode != OutputMode::DepthOnly);
+    const bool needDepth = (mode != OutputMode::ColorOnly);
+    const int totalFrames = writer.totalFrames();
+    Vec3 position = {0,0,0};
+    Vec3 rotation = {0,0,0};
+    Vec3 scale = {0.8,0.8,0.8};
+
+    for (int frame = 0; frame < totalFrames; ++frame) {
+        rotation.y = static_cast<float>(360.0 * frame / totalFrames);
+        renderFrame(newModel, newCamera, colorRasterizer, depthRasterizer,
+                    newModelView, newPerspective, newClipper, newViewport,
+                    colorZBuffer, depthZBuffer, position, rotation, scale,
+                    needColor, needDepth, colorMap, depthMap);
+
+        // 按模式合成：单独输出，或把颜色图和深度图左右/上下拼在一起
+        TGAImage frameImage = composeFrame(colorMap, depthMap, mode);
+        if (!writer.writeFrame(frameImage)) {
+            writer.close();
+            return 1;
+        }
+        if ((frame + 1) % 30 == 0 || frame + 1 == totalFrames) {
+            std::cout << "已渲染 " << (frame + 1) << "/" << totalFrames << " 帧" << std::endl;
+        }
+    }
+
+    if (!writer.close()) {
+        return 1;
+    }
+
+    // 输出最后一帧 TGA，保留单帧检查方式。
+    // 第二个参数 vflip 必须显式传 false：
+    // write_tga_file 默认 vflip=true，会把文件头声明成“左下角为原点”，
+    // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
+    if (needColor) colorMap.write_tga_file("out/diablo3_pose_color.tga", false);
+    if (needDepth) depthMap.write_tga_file("out/diablo3_pose_depth.tga", false);
+    zBuffer.clear();
 
     return 0;
 }
