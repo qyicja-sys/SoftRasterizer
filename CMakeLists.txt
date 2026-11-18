@@ -39,6 +39,7 @@ add_executable(SoftRasterizer
     src/pipeline/viewPort.cpp     # 视口变换矩阵
     src/pipeline/clipper.cpp      # 视锥裁剪
     src/pipeline/rasterize.cpp    # 光栅化
+    src/video/videoWriter.cpp     # FFmpeg 视频输出（管道调用 ffmpeg.exe）
 )
 
 # 7. 为可执行文件指定私有头文件路径
