@@ -598,7 +598,7 @@ int main(int argc, char** argv){
     //   SoftRasterizer.exe --width 800 --height 800 --fps 30 --duration 5
     VideoWriter::Config videoConfig;
     videoConfig.outputPath = "out/diablo3_pose_turntable.mp4";
-    OutputMode mode = OutputMode::DepthOnly;
+    OutputMode mode = OutputMode::SideBySide;
 
     // 优先使用项目内下载的 ffmpeg；不存在时回退到系统 PATH 里的 ffmpeg
     if (std::filesystem::exists("tools/ffmpeg/bin/ffmpeg.exe")) {
