@@ -1,5 +1,13 @@
 #include "tgaimage.h"
 #include "model/model.h"
+#include "camera/camera.h"
+#include "pipeline/modelView.h"
+#include "pipeline/perspective.h"
+#include "pipeline/viewPort.h"
+#include "pipeline/clipper.h"
+#include "zbuffer/zbuffer.h"
+#include "matrix/matrix.h"
+#include "vec/Vec.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +20,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <random>
 #include <stdexcept>
@@ -115,294 +124,267 @@ void *operator new[](std::size_t size, const std::nothrow_t &) noexcept {
 void operator delete(void *ptr, const std::nothrow_t &) noexcept { ::operator delete(ptr); }
 void operator delete[](void *ptr, const std::nothrow_t &) noexcept { ::operator delete[](ptr); }
 
-// 计时用的颜色固定为红色：避免 std::rand() 等与光栅化算法无关的开销混进计时。
-constexpr TGAColor benchColor = {0, 0, 255, 255};
-
-// ======================= 待测实现（与 src/main.cpp 逐行一致） =======================
-// src/main.cpp 自带 main()，测试目标无法直接链接它，因此这里复制了同一份算法代码，
-// 保证计时对象与主程序里的实现完全一致。
-// 如果以后修改了 src/main.cpp 里的实现，请同步更新这里，否则对比结果将失去意义。
-
-// 计算边函数
-int line_function(int Ax, int Ay, int Bx, int By, int x, int y) {
-    return (Bx - Ax) * (y - Ay) - (By - Ay) * (x - Ax);
+// 与 src/main.cpp 中“每个三角形随机取色”的方式一致，不再整帧只填一个颜色。
+// 这里用三角形下标生成确定性伪随机色，而不是调用 std::rand()，原因有两点：
+//   1. 同一三角形在 A/B/C/D 四个实验、不同轮次中颜色必须完全一致，
+//      否则像素校验会把“颜色不同”误算成覆盖差异；
+//   2. std::rand() 的全局状态与随机数开销不应混进光栅化计时。
+TGAColor triangleColor(std::size_t index) {
+    std::uint32_t v = static_cast<std::uint32_t>(index) * 2654435761u;
+    v ^= v >> 13;
+    v *= 1274126177u;
+    v ^= v >> 16;
+    return TGAColor{static_cast<std::uint8_t>(v & 0xFF),
+                    static_cast<std::uint8_t>((v >> 8) & 0xFF),
+                    static_cast<std::uint8_t>((v >> 16) & 0xFF),
+                    255};
 }
 
-// 计算三角形有向面积
-double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
-    return .5*((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
+// ======================= 待测实现（四个实验） =======================
+//
+// 实验设计：
+//   A  整数屏幕坐标 + 增量计算         验证旧环境
+//   B  小数屏幕坐标 + 增量计算(float)  验证摄像机带来的影响
+//   C  小数屏幕坐标 + 每像素直接计算   验证直接计算是否稳定
+//   D  小数屏幕坐标 + 增量计算(double) 验证精度改善效果
+//
+// 屏幕坐标来自视图变换，y 向下，模型正面在屏幕空间的有向面积为负，
+// 因此四个实验都只保留“有向面积 < 0”的三角形（与 src/main.cpp 的约定一致）。
+// 四个实验统一使用 y 外层 / x 内层的像素遍历顺序，保证差异只来自坐标精度与计算方式。
+
+// 边函数：三角形边 AB 与点 P 构成的平行四边形有向面积（未除以 2）
+static inline double edgeFunction(double ax, double ay, double bx, double by,
+                                  double px, double py) {
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
 }
 
-// 三个点的叉积计算
-int cross_product(int ax, int ay, int bx, int by, int cx, int cy) {
-    return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
+// 三角形 PBC 的有向面积（除以 2，与旧实现一致）
+static inline double signedArea(double px, double py, double bx, double by,
+                                double cx, double cy) {
+    return .5 * ((by - py) * (bx + px) + (cy - by) * (cx + bx) + (py - cy) * (px + cx));
 }
 
-// Bresenham 画线，triangle_1 依赖它描三角形的三条边。
-void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color) {
-    // 如果线比较陡（y 跨度大于 x 跨度），以 y 为主步进变量，先转置
-    bool steep = std::abs(ax-bx) < std::abs(ay-by);
-    if (steep) {
-        std::swap(ax, ay);
-        std::swap(bx, by);
-    }
-
-    // 保证从左往右画
-    if (ax > bx) {
-        std::swap(ax, bx);
-        std::swap(ay, by);
-    }
-
-    // 全整数误差法，避免浮点运算
-    int y = ay;
-    int ierror = 0;
-    for (int x=ax; x<=bx; x++) {
-        if (steep)
-            framebuffer.set(y, x, color);
-        else
-            framebuffer.set(x, y, color);
-        ierror += 2 * std::abs(by-ay);
-        y += (by > ay ? 1 : -1) * (ierror > bx - ax);
-        ierror -= 2 * (bx-ax)   * (ierror > bx - ax);
-    }
+// 三个点的叉积：用于判断屏幕空间绕序（负 = 正面）
+static inline double crossProduct(double ax, double ay, double bx, double by,
+                                  double cx, double cy) {
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
 
-// 绘制三角形：扫描线填充（自己想的直线方程反函数填充）
-void triangle_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
-
-    int min_y = std::min({ay, by, cy});
-    int max_y = std::max({ay, by, cy});
-
-    // 逐行扫描，利用反函数填补缺失的像素点
-    for (int y = min_y; y <= max_y; ++y) {
-        std::vector<float> intersect_x;
-
-        // 遍历三条边，分别求扫描线与边的交点
-        auto add_intersection = [&](int x1, int y1, int x2, int y2) {
-            // 水平边不参与交点计算
-            if (y1 == y2) {
-                return;
-            }
-
-            // 统一采用左闭右开式的 y 范围，保证顶点不会被相邻两条边重复计算
-            int low_y = std::min(y1, y2);
-            int high_y = std::max(y1, y2);
-
-            if (y >= low_y && y < high_y) {
-                // 线段参数函数，t 表示「从起点走到终点的比例」
-                float t = static_cast<float>(y - y1) / (y2 - y1);
-                float x = x1 + t * (x2 - x1);
-                intersect_x.push_back(x);
-            }
-        };
-
-        add_intersection(ax, ay, bx, by);
-        add_intersection(bx, by, cx, cy);
-        add_intersection(ax, ay, cx, cy);
-
-        // 正常情况下，非顶点扫描行会得到两个交点
-        if (intersect_x.size() != 2) {
-            continue;
-        }
-
-        float left = std::min(intersect_x[0], intersect_x[1]);
-        float right = std::max(intersect_x[0], intersect_x[1]);
-
-        int x_start = static_cast<int>(std::ceil(left));
-        int x_end = static_cast<int>(std::floor(right));
-
-        // 直接填充像素，不再调用 Bresenham
-        for (int x = x_start; x <= x_end; ++x) {
-            framebuffer.set(x, y, color);
-        }
-    }
+// 整数版边函数与叉积，供实验 A 使用
+static inline int edgeFunctionInt(int ax, int ay, int bx, int by, int px, int py) {
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
 }
 
-// 绘制三角形：扫描线填充，采用线性插值
-void triangle_2(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
-
-    // 按 y 坐标升序排列顶点 a、b、c
-    if (ay>by) { std::swap(ax, bx); std::swap(ay, by); }
-    if (ay>cy) { std::swap(ax, cx); std::swap(ay, cy); }
-    if (by>cy) { std::swap(bx, cx); std::swap(by, cy); }
-    int total_height = cy-ay;
-
-    if (ay != by) { // 如果下半部分没有退化
-        int segment_height = by - ay;
-        for (int y=ay; y<=by; y++) {
-            int x1 = ax + ((cx - ax)*(y - ay)) / total_height;
-            int x2 = ax + ((bx - ax)*(y - ay)) / segment_height;
-            for (int x=std::min(x1,x2); x<std::max(x1,x2); x++)
-                framebuffer.set(x, y, color);
-        }
-    }
-    if (by != cy) { // 如果上半部分没有退化
-        int segment_height = cy - by;
-        for (int y=by; y<=cy; y++) {
-            int x1 = ax + ((cx - ax)*(y - ay)) / total_height;
-            int x2 = bx + ((cx - bx)*(y - by)) / segment_height;
-            for (int x=std::min(x1,x2); x<std::max(x1,x2); x++)
-                framebuffer.set(x, y, color);
-        }
-    }
+static inline int crossProductInt(int ax, int ay, int bx, int by, int cx, int cy) {
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
 
-// 绘制三角形：扫描线填充，边函数 + 单方向增量计算
-void triangle_3_1(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+// 把小数包围盒裁到屏幕内；三角形与屏幕完全无交集时返回 false。
+static bool clippedBounds(double ax, double ay, double bx, double by, double cx, double cy,
+                          int width, int height,
+                          int &minX, int &minY, int &maxX, int &maxY) {
+    const double x0 = std::min({ax, bx, cx});
+    const double x1 = std::max({ax, bx, cx});
+    const double y0 = std::min({ay, by, cy});
+    const double y1 = std::max({ay, by, cy});
 
-#pragma omp parallel for
-    for(int y=bbminy; y<=bbmaxy; y++){
-        int Ep1 = line_function(ax, ay, bx, by, bbminx, y);
-        int Ep2 = line_function(bx, by, cx, cy, bbminx, y);
-        int Ep3 = line_function(cx, cy, ax, ay, bbminx, y);
-
-        int a1 = ay - by;
-        int a2 = by - cy;
-        int a3 = cy - ay;
-        for(int x=bbminx; x<=bbmaxx; x++){
-            if((Ep1>=0 && Ep2>=0 && Ep3>=0) || (Ep1<=0 && Ep2<=0 && Ep3<=0)){
-                framebuffer.set(x, y, color);
-            }
-            Ep1 += a1;
-            Ep2 += a2;
-            Ep3 += a3;
-        }
+    if (x1 < 0.0 || y1 < 0.0 || x0 > width - 1.0 || y0 > height - 1.0) {
+        return false;
     }
+
+    minX = std::max(0, static_cast<int>(std::floor(x0)));
+    minY = std::max(0, static_cast<int>(std::floor(y0)));
+    maxX = std::min(width - 1, static_cast<int>(std::ceil(x1)));
+    maxY = std::min(height - 1, static_cast<int>(std::ceil(y1)));
+    return minX <= maxX && minY <= maxY;
 }
 
-// 绘制三角形：扫描线填充，边函数 + 双方向增量计算
-void triangle_3(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
+// 实验 A：整数屏幕坐标 + 增量计算（旧环境）。
+// 把小数坐标用 static_cast<int> 截断，完全复用旧版 triangle_3 的全整数增量逻辑。
+void rasterizeIntegerIncrement(double ax, double ay, double bx, double by,
+                               double cx, double cy, TGAImage &framebuffer, TGAColor color) {
+    const int iax = static_cast<int>(ax);
+    const int iay = static_cast<int>(ay);
+    const int ibx = static_cast<int>(bx);
+    const int iby = static_cast<int>(by);
+    const int icx = static_cast<int>(cx);
+    const int icy = static_cast<int>(cy);
 
-    // 初始化边函数值，方便后续做增量计算
-    int E1_row = line_function(ax, ay, bx, by, bbminx, bbminy);
-    int E2_row = line_function(bx, by, cx, cy, bbminx, bbminy);
-    int E3_row = line_function(cx, cy, ax, ay, bbminx, bbminy);
+    // 利用叉积进行背面剔除；面积 >= 0 视为背面或退化
+    const int area2 = crossProductInt(iax, iay, ibx, iby, icx, icy);
+    if (area2 >= 0) return;
 
-    int a1 = ay - by;
-    int a2 = by - cy;
-    int a3 = cy - ay;
-
-    int b1 = bx - ax;
-    int b2 = cx - bx;
-    int b3 = ax - cx;
-
-#pragma omp parallel for
-    for(int y=bbminy; y<=bbmaxy; y++){
-        // 每一行独立初始化，每一行的初始边函数值应该独立计算
-        int Ep1 = E1_row + (y - bbminy) * b1;
-        int Ep2 = E2_row + (y - bbminy) * b2;
-        int Ep3 = E3_row + (y - bbminy) * b3;
-        for(int x=bbminx; x<=bbmaxx; x++){
-            if((Ep1>=0 && Ep2>=0 && Ep3>=0) || (Ep1<=0 && Ep2<=0 && Ep3<=0)){
-                framebuffer.set(x, y, color);
-            }
-            Ep1 += a1;
-            Ep2 += a2;
-            Ep3 += a3;
-        }
+    int minX = 0, minY = 0, maxX = 0, maxY = 0;
+    if (!clippedBounds(iax, iay, ibx, iby, icx, icy,
+                       framebuffer.width(), framebuffer.height(),
+                       minX, minY, maxX, maxY)) {
+        return;
     }
-}
 
-// 绘制三角形：利用重心坐标判断像素是否在三角形内
-void triangle_4(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
-
-#pragma omp parallel for
-    for (int x=bbminx; x<=bbmaxx; x++) {
-        for (int y=bbminy; y<=bbmaxy; y++) {
-            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-            double beta  = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
-            double gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
-            framebuffer.set(x, y, color);
-        }
-    }
-}
-
-// 绘制三角形：重心坐标 + 增量计算
-void triangle_5(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // 利用叉积进行背面剔除
-    int L = cross_product(ax, ay, bx, by, cx, cy);
-    if(L<=0) return; // 背面
-
-    int bbminx = std::min(std::min(ax, bx), cx); // 三角形的包围盒
-    int bbminy = std::min(std::min(ay, by), cy); // 由左上角和右下角定义
-    int bbmaxx = std::max(std::max(ax, bx), cx);
-    int bbmaxy = std::max(std::max(ay, by), cy);
-
-    double triangle_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    double alpha_area_start = signed_triangle_area(bbminx, bbminy, bx, by, cx, cy);
-    double beta_area_start  = signed_triangle_area(bbminx, bbminy, cx, cy, ax, ay);
-    double gamma_area_start = signed_triangle_area(bbminx, bbminy, ax, ay, bx, by);
+    // 初始化边函数值，后续做增量计算
+    const int e1Row = edgeFunctionInt(iax, iay, ibx, iby, minX, minY);
+    const int e2Row = edgeFunctionInt(ibx, iby, icx, icy, minX, minY);
+    const int e3Row = edgeFunctionInt(icx, icy, iax, iay, minX, minY);
 
     // X 方向的增量
-    double a1 = (by - cy)*.5;
-    double a2 = (cy - ay)*.5;
-    double a3 = (ay - by)*.5;
+    const int stepX1 = iay - iby;
+    const int stepX2 = iby - icy;
+    const int stepX3 = icy - iay;
 
     // Y 方向的增量
-    double b1 = (cx - bx)*.5;
-    double b2 = (ax - cx)*.5;
-    double b3 = (bx - ax)*.5;
+    const int stepY1 = ibx - iax;
+    const int stepY2 = icx - ibx;
+    const int stepY3 = iax - icx;
 
 #pragma omp parallel for
-    for (int x=bbminx; x<=bbmaxx; x++) {
-        double alpha_init = alpha_area_start + (x - bbminx)*a1;
-        double beta_init  = beta_area_start  + (x - bbminx)*a2;
-        double gamma_init = gamma_area_start + (x - bbminx)*a3;
-        for (int y=bbminy; y<=bbmaxy; y++) {
-            double alpha = alpha_init / triangle_area;
-            double beta  = beta_init / triangle_area;
-            double gamma = gamma_init / triangle_area;
-            alpha_init += b1;
-            beta_init += b2;
-            gamma_init += b3;
-            if (alpha<0 || beta<0 || gamma<0) continue; // 重心坐标为负 => 该像素在三角形之外
+    for (int y = minY; y <= maxY; ++y) {
+        // 每一行独立初始化，避免上一行的状态影响下一行
+        int e1 = e1Row + (y - minY) * stepY1;
+        int e2 = e2Row + (y - minY) * stepY2;
+        int e3 = e3Row + (y - minY) * stepY3;
+        for (int x = minX; x <= maxX; ++x) {
+            if ((e1 >= 0 && e2 >= 0 && e3 >= 0) || (e1 <= 0 && e2 <= 0 && e3 <= 0)) {
+                framebuffer.set(x, y, color);
+            }
+            e1 += stepX1;
+            e2 += stepX2;
+            e3 += stepX3;
+        }
+    }
+}
+
+// 实验 B：小数屏幕坐标 + 增量计算（float）。
+// 坐标保持小数，但边函数与增量沿用旧代码的 float 类型，用来观察
+// 摄像机投影产生的小数坐标进入增量算法后，累积误差有多大。
+void rasterizeFloatIncrement(double ax, double ay, double bx, double by,
+                             double cx, double cy, TGAImage &framebuffer, TGAColor color) {
+    const double area = signedArea(ax, ay, bx, by, cx, cy);
+    if (area >= 0.0 || std::abs(area) < 1e-12) return;
+
+    int minX = 0, minY = 0, maxX = 0, maxY = 0;
+    if (!clippedBounds(ax, ay, bx, by, cx, cy,
+                       framebuffer.width(), framebuffer.height(),
+                       minX, minY, maxX, maxY)) {
+        return;
+    }
+
+    const float fax = static_cast<float>(ax);
+    const float fay = static_cast<float>(ay);
+    const float fbx = static_cast<float>(bx);
+    const float fby = static_cast<float>(by);
+    const float fcx = static_cast<float>(cx);
+    const float fcy = static_cast<float>(cy);
+
+    const float e1Row = (fbx - fax) * (static_cast<float>(minY) - fay)
+                      - (fby - fay) * (static_cast<float>(minX) - fax);
+    const float e2Row = (fcx - fbx) * (static_cast<float>(minY) - fby)
+                      - (fcy - fby) * (static_cast<float>(minX) - fbx);
+    const float e3Row = (fax - fcx) * (static_cast<float>(minY) - fcy)
+                      - (fay - fcy) * (static_cast<float>(minX) - fcx);
+
+    const float stepX1 = fay - fby;
+    const float stepX2 = fby - fcy;
+    const float stepX3 = fcy - fay;
+
+    const float stepY1 = fbx - fax;
+    const float stepY2 = fcx - fbx;
+    const float stepY3 = fax - fcx;
+
+#pragma omp parallel for
+    for (int y = minY; y <= maxY; ++y) {
+        float e1 = e1Row + static_cast<float>(y - minY) * stepY1;
+        float e2 = e2Row + static_cast<float>(y - minY) * stepY2;
+        float e3 = e3Row + static_cast<float>(y - minY) * stepY3;
+        for (int x = minX; x <= maxX; ++x) {
+            if ((e1 >= 0.f && e2 >= 0.f && e3 >= 0.f) || (e1 <= 0.f && e2 <= 0.f && e3 <= 0.f)) {
+                framebuffer.set(x, y, color);
+            }
+            e1 += stepX1;
+            e2 += stepX2;
+            e3 += stepX3;
+        }
+    }
+}
+
+// 实验 C：小数屏幕坐标 + 每像素直接计算（double）。
+// 每个像素重新计算三个有向面积再除以总面积，不存在跨像素累积误差，作为稳定基准。
+void rasterizeDirectPixel(double ax, double ay, double bx, double by,
+                          double cx, double cy, TGAImage &framebuffer, TGAColor color) {
+    const double area = signedArea(ax, ay, bx, by, cx, cy);
+    if (area >= 0.0 || std::abs(area) < 1e-12) return;
+
+    int minX = 0, minY = 0, maxX = 0, maxY = 0;
+    if (!clippedBounds(ax, ay, bx, by, cx, cy,
+                       framebuffer.width(), framebuffer.height(),
+                       minX, minY, maxX, maxY)) {
+        return;
+    }
+
+#pragma omp parallel for
+    for (int y = minY; y <= maxY; ++y) {
+        for (int x = minX; x <= maxX; ++x) {
+            const double alpha = signedArea(x, y, bx, by, cx, cy) / area;
+            const double beta  = signedArea(x, y, cx, cy, ax, ay) / area;
+            const double gamma = signedArea(x, y, ax, ay, bx, by) / area;
+            if (alpha < 0.0 || beta < 0.0 || gamma < 0.0) continue; // 重心坐标为负 => 在三角形之外
             framebuffer.set(x, y, color);
+        }
+    }
+}
+
+// 实验 D：小数屏幕坐标 + 增量计算（double）。
+// 与实验 B 结构完全相同，只把边函数与增量换成 double，验证精度改善效果。
+void rasterizeDoubleIncrement(double ax, double ay, double bx, double by,
+                              double cx, double cy, TGAImage &framebuffer, TGAColor color) {
+    const double area = signedArea(ax, ay, bx, by, cx, cy);
+    if (area >= 0.0 || std::abs(area) < 1e-12) return;
+
+    int minX = 0, minY = 0, maxX = 0, maxY = 0;
+    if (!clippedBounds(ax, ay, bx, by, cx, cy,
+                       framebuffer.width(), framebuffer.height(),
+                       minX, minY, maxX, maxY)) {
+        return;
+    }
+
+    const double e1Row = edgeFunction(ax, ay, bx, by, minX, minY);
+    const double e2Row = edgeFunction(bx, by, cx, cy, minX, minY);
+    const double e3Row = edgeFunction(cx, cy, ax, ay, minX, minY);
+
+    const double stepX1 = ay - by;
+    const double stepX2 = by - cy;
+    const double stepX3 = cy - ay;
+
+    const double stepY1 = bx - ax;
+    const double stepY2 = cx - bx;
+    const double stepY3 = ax - cx;
+
+#pragma omp parallel for
+    for (int y = minY; y <= maxY; ++y) {
+        double e1 = e1Row + static_cast<double>(y - minY) * stepY1;
+        double e2 = e2Row + static_cast<double>(y - minY) * stepY2;
+        double e3 = e3Row + static_cast<double>(y - minY) * stepY3;
+        for (int x = minX; x <= maxX; ++x) {
+            if ((e1 >= 0.0 && e2 >= 0.0 && e3 >= 0.0) || (e1 <= 0.0 && e2 <= 0.0 && e3 <= 0.0)) {
+                framebuffer.set(x, y, color);
+            }
+            e1 += stepX1;
+            e2 += stepX2;
+            e3 += stepX3;
         }
     }
 }
 
 // ================================ 测试脚手架 ================================
 
-// 统一后的三角形类型：只保留屏幕坐标。
+// 统一后的三角形类型：保存小数屏幕坐标。
 struct BenchTriangle {
-    int ax, ay;
-    int bx, by;
-    int cx, cy;
+    double ax, ay;
+    double bx, by;
+    double cx, cy;
 };
 
-// 待测函数指针类型，与所有 triangle_* 的签名一致。
-using RasterizeFn = void (*)(int, int, int, int, int, int, TGAImage &, TGAColor);
+// 待测函数指针类型，与四个实验的签名一致。
+using RasterizeFn = void (*)(double, double, double, double, double, double, TGAImage &, TGAColor);
 
 // 一个待测对象：名字 + 函数指针。
 struct BenchEntry {
@@ -411,13 +393,11 @@ struct BenchEntry {
 };
 
 // 测试顺序固定，便于结果对照；计时时每轮会交换正序 / 倒序执行。
-constexpr std::array<BenchEntry, 6> benchmarks = {{
-    {"triangle_1",   triangle_1},
-    {"triangle_2",   triangle_2},
-    {"triangle_3_1", triangle_3_1},
-    {"triangle_3",   triangle_3},
-    {"triangle_4",   triangle_4},
-    {"triangle_5",   triangle_5},
+constexpr std::array<BenchEntry, 4> benchmarks = {{
+    {"A_int_inc",    rasterizeIntegerIncrement},
+    {"B_float_inc",  rasterizeFloatIncrement},
+    {"C_direct",     rasterizeDirectPixel},
+    {"D_double_inc", rasterizeDoubleIncrement},
 }};
 
 struct TimingStats {
@@ -426,9 +406,11 @@ struct TimingStats {
     double maximum = 0.0;
 };
 
-struct PixelCheck {
-    std::size_t nonBlack = 0;               // 该函数实际写入的像素数
-    std::size_t differentFromReference = 0; // 与基准图颜色不同的像素数
+// 像素统计：非黑像素数，以及分别与实验 A、实验 C 不同的像素数。
+struct PixelDiff {
+    std::size_t nonBlack = 0;
+    std::size_t differentFromA = 0;
+    std::size_t differentFromC = 0;
 };
 
 // 一个测试条件（一个分辨率 / 一种数量 / 一种大小 / 一种形状）。
@@ -457,37 +439,113 @@ struct BenchmarkGroup {
     std::string outputDir;
     int rounds = 1;
     bool verbose = false;      // 是否逐轮打印（模型组使用）
-    bool checked = false;      // 是否做像素校验并保存每个实现的图（模型组使用）
+    bool checked = false;      // 是否做像素校验并保存每个实验的图（模型组使用）
     std::vector<BenchmarkCase> cases;
 };
 
-// 把模型的所有面一次性转换成屏幕三角形。坐标映射与 src/main.cpp 完全一致：
-//   屏幕x = (x + 1) * (width  / 2)
-//   屏幕y = (1 - y) * (height / 2)
-std::vector<BenchTriangle> buildTriangles(const Model &model, int width, int height) {
+// 用与 src/main.cpp 相同的管线把模型的面转换成小数屏幕坐标：
+//   modelView -> perspective -> 裁剪 -> 透视除法 -> viewPort
+// 与旧测试的正交映射不同，这里保留了小数部分，正是“摄像机带来的影响”。
+// 相机焦距随画布尺寸等比缩放，保证不同分辨率下模型在画面中的占比一致。
+std::vector<BenchTriangle> buildCameraTriangles(Model &model, int width, int height) {
+    model.setModelMatrix(Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1));
+
+    const float focalLength = 500.0f * static_cast<float>(width) / 1024.0f;
+    camera cam(focalLength, width, height);
+    // 相机必须在模型前方：worldToCamera 会把 z 取反，position.z 需大于模型最大 z。
+    cam.setPosition(Vec3(0, 0, 1));
+    cam.setCenter(Vec3(0, 0, 0));
+    cam.setUp(Vec3(0, 1, 0));
+    cam.setFov();
+    cam.setRotation(Vec3(15, 0, 0));
+
+    modelView view;
+    view.lookat(cam, model);
+
+    // 先统计相机空间的 z 范围，作为透视矩阵的近远平面。
+    ZBuffer zBuffer(width, height);
+    zBuffer.setNearPlane(std::numeric_limits<float>::max());
+    zBuffer.setFarPlane(0.0f);
+    const mat<4, 4, double> mv = view.getModelViewMatrix();
+    for (int i = 0; i < model.nverts(); ++i) {
+        const float z = (mv * model.vert(i).toVec4()).z;
+        if (z > 0.0f) {
+            zBuffer.setNearPlane(std::min(zBuffer.getNearPlane(), z));
+            zBuffer.setFarPlane(std::max(zBuffer.getFarPlane(), z));
+        }
+    }
+    // 极端情况下（没有有效顶点或近远平面重合）给一组兜底值，避免透视矩阵出现除零。
+    if (!(zBuffer.getNearPlane() < zBuffer.getFarPlane())) {
+        zBuffer.setNearPlane(0.1f);
+        zBuffer.setFarPlane(100.0f);
+    }
+
+    perspective persp;
+    persp.setCamera(cam);
+    persp.perspectiveTransform(zBuffer, width, height);
+
+    viewPort viewport;
+    viewport.setWidth(width);
+    viewport.setHeight(height);
+    viewport.setViewPort();
+
+    const mat<4, 4, double> mvp = persp.getPerspectiveMatrix() * mv;
+    const mat<4, 4, double> viewPortMatrix = viewport.getViewPortMatrix();
+
     std::vector<BenchTriangle> triangles;
     triangles.reserve(static_cast<std::size_t>(model.nfaces()));
 
     for (int i = 0; i < model.nfaces(); ++i) {
         const std::array<int, 3> &face = model.face(i);
-        std::array<int, 3> sx{};
-        std::array<int, 3> sy{};
 
+        std::vector<Vec4> clip;
+        clip.reserve(3);
         for (int j = 0; j < 3; ++j) {
             const Vec3 &v = model.vert(face[j]);
-            sx[j] = static_cast<int>((v.x + 1) * (width / 2.f));
-            sy[j] = static_cast<int>((1 - v.y) * (height / 2.f));
+            clip.push_back(mvp * v.toVec4());
         }
 
-        triangles.push_back({sx[0], sy[0], sx[1], sy[1], sx[2], sy[2]});
+        clipper clipPolygon;
+        clipPolygon.isClipped(clip);
+        const std::vector<std::vector<Vec4>> readyFace = clipPolygon.triangulation();
+
+        for (const std::vector<Vec4> &triangle : readyFace) {
+            bool valid = true;
+            std::array<double, 3> screenX{};
+            std::array<double, 3> screenY{};
+            for (int j = 0; j < 3; ++j) {
+                // 裁剪后 w 应为正；退化或仍为非正时直接丢弃这个三角形。
+                if (!(triangle[j].w > 0.0f)) {
+                    valid = false;
+                    break;
+                }
+                const Vec4 ndc = triangle[j] / triangle[j].w;
+                const Vec2 screen = (viewPortMatrix * ndc).getScreenCoord();
+                if (!std::isfinite(screen.x) || !std::isfinite(screen.y)) {
+                    valid = false;
+                    break;
+                }
+                screenX[j] = screen.x;
+                screenY[j] = screen.y;
+            }
+            if (!valid) continue;
+
+            triangles.push_back({screenX[0], screenY[0],
+                                 screenX[1], screenY[1],
+                                 screenX[2], screenY[2]});
+        }
     }
+
     return triangles;
 }
 
 // 把全部三角形绘制一遍，不计时。
+// 每个三角形使用各自的颜色（与 src/main.cpp 的填充方式一致），
+// 颜色只由下标决定，因此四个实验画同一批三角形时颜色完全相同。
 void renderAll(const std::vector<BenchTriangle> &triangles, TGAImage &framebuffer, RasterizeFn rasterize) {
-    for (const BenchTriangle &t : triangles) {
-        rasterize(t.ax, t.ay, t.bx, t.by, t.cx, t.cy, framebuffer, benchColor);
+    for (std::size_t i = 0; i < triangles.size(); ++i) {
+        const BenchTriangle &t = triangles[i];
+        rasterize(t.ax, t.ay, t.bx, t.by, t.cx, t.cy, framebuffer, triangleColor(i));
     }
 }
 
@@ -514,28 +572,34 @@ TimingStats summarize(const std::vector<double> &samples) {
     return stats;
 }
 
-// 统计非黑像素，并与基准图逐像素比较。
-PixelCheck checkAgainstReference(const TGAImage &image, const TGAImage &reference) {
-    PixelCheck check;
+// 逐像素统计：非黑像素数，以及与实验 A、实验 C 的差异像素数。
+PixelDiff compareImages(const TGAImage &image, const TGAImage &imageA, const TGAImage &imageC) {
+    PixelDiff diff;
     for (int y = 0; y < image.height(); ++y) {
         for (int x = 0; x < image.width(); ++x) {
             const TGAColor pixel = image.get(x, y);
             if (pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0) {
-                ++check.nonBlack;
+                ++diff.nonBlack;
             }
 
-            const TGAColor ref = reference.get(x, y);
-            if (pixel[0] != ref[0] || pixel[1] != ref[1] || pixel[2] != ref[2]) {
-                ++check.differentFromReference;
+            const TGAColor a = imageA.get(x, y);
+            if (pixel[0] != a[0] || pixel[1] != a[1] || pixel[2] != a[2]) {
+                ++diff.differentFromA;
+            }
+
+            const TGAColor c = imageC.get(x, y);
+            if (pixel[0] != c[0] || pixel[1] != c[1] || pixel[2] != c[2]) {
+                ++diff.differentFromC;
             }
         }
     }
-    return check;
+    return diff;
 }
 
-// 保证三角形是正面朝向（叉积 > 0），否则所有实现的背面剔除都会直接 return。
+// 保证三角形是正面朝向（屏幕空间有向面积为负），否则所有实验都会直接丢弃。
 void ensureFrontFacing(BenchTriangle &triangle) {
-    if (cross_product(triangle.ax, triangle.ay, triangle.bx, triangle.by, triangle.cx, triangle.cy) <= 0) {
+    if (crossProduct(triangle.ax, triangle.ay, triangle.bx, triangle.by,
+                     triangle.cx, triangle.cy) >= 0.0) {
         std::swap(triangle.bx, triangle.cx);
         std::swap(triangle.by, triangle.cy);
     }
@@ -543,22 +607,23 @@ void ensureFrontFacing(BenchTriangle &triangle) {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// 在画布上生成 count 个随机三角形。
+// 在画布上生成 count 个随机三角形（坐标保留小数部分）。
 // radiusMin / radiusMax 以 1024 画布为基准，实际会按画布尺寸等比缩放。
 std::vector<BenchTriangle> makeRandomTriangles(std::size_t count,
-                                               int radiusMin, int radiusMax,
+                                               double radiusMin, double radiusMax,
                                                int width, int height,
                                                unsigned seed) {
     const double scale = static_cast<double>(width) / 1024.0;
-    const int scaledMin = std::max(1, static_cast<int>(radiusMin * scale));
-    const int scaledMax = std::max(scaledMin, static_cast<int>(radiusMax * scale));
+    const double scaledMin = std::max(1.0, radiusMin * scale);
+    const double scaledMax = std::max(scaledMin, radiusMax * scale);
 
-    const int margin = std::min(scaledMax + 2, std::max(1, std::min(width, height) / 2 - 1));
+    const double margin = std::min(scaledMax + 2.0,
+                                   std::max(1.0, std::min(width, height) / 2.0 - 1.0));
 
     std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> xDist(margin, width - 1 - margin);
-    std::uniform_int_distribution<int> yDist(margin, height - 1 - margin);
-    std::uniform_int_distribution<int> radiusDist(scaledMin, scaledMax);
+    std::uniform_real_distribution<double> xDist(margin, width - 1.0 - margin);
+    std::uniform_real_distribution<double> yDist(margin, height - 1.0 - margin);
+    std::uniform_real_distribution<double> radiusDist(scaledMin, scaledMax);
     std::uniform_real_distribution<double> angleDist(0.0, 2.0 * kPi);
 
     std::vector<BenchTriangle> triangles;
@@ -567,23 +632,24 @@ std::vector<BenchTriangle> makeRandomTriangles(std::size_t count,
     std::size_t attempts = 0;
     const std::size_t maxAttempts = count * 50;
     while (triangles.size() < count && attempts++ < maxAttempts) {
-        const int centerX = xDist(rng);
-        const int centerY = yDist(rng);
+        const double centerX = xDist(rng);
+        const double centerY = yDist(rng);
 
-        std::array<int, 3> xs{};
-        std::array<int, 3> ys{};
+        std::array<double, 3> xs{};
+        std::array<double, 3> ys{};
         for (int j = 0; j < 3; ++j) {
             const double angle = angleDist(rng);
-            const int radius = radiusDist(rng);
-            xs[j] = std::clamp(centerX + static_cast<int>(std::cos(angle) * radius), 0, width - 1);
-            ys[j] = std::clamp(centerY + static_cast<int>(std::sin(angle) * radius), 0, height - 1);
+            const double radius = radiusDist(rng);
+            xs[j] = std::clamp(centerX + std::cos(angle) * radius, 0.0, width - 1.0);
+            ys[j] = std::clamp(centerY + std::sin(angle) * radius, 0.0, height - 1.0);
         }
 
         BenchTriangle triangle{xs[0], ys[0], xs[1], ys[1], xs[2], ys[2]};
         ensureFrontFacing(triangle);
 
         // 三个点共线时叉积仍为 0，换一个随机三角形重试。
-        if (cross_product(triangle.ax, triangle.ay, triangle.bx, triangle.by, triangle.cx, triangle.cy) > 0) {
+        if (crossProduct(triangle.ax, triangle.ay, triangle.bx, triangle.by,
+                         triangle.cx, triangle.cy) < 0.0) {
             triangles.push_back(triangle);
         }
     }
@@ -596,59 +662,60 @@ enum class ShapeKind {
     Degenerate
 };
 
-// 生成指定形状的三角形：
+// 生成指定形状的三角形（坐标保留小数）：
 //   等边  -> 三条边接近等长
 //   细长  -> 很窄但很高，包围盒扫描量大、实际覆盖面积小
-//   退化  -> 三点共线，叉积为 0，会被所有实现的背面剔除直接丢弃
+//   退化  -> 三点共线，有向面积为 0，会被四个实验直接丢弃
 std::vector<BenchTriangle> makeShapeTriangles(ShapeKind kind, std::size_t count,
                                               int width, int height, unsigned seed) {
     const double scale = static_cast<double>(width) / 1024.0;
 
-    int span = 0;
+    double span = 0.0;
     switch (kind) {
         case ShapeKind::Equilateral:
-            span = static_cast<int>(160 * scale);
+            span = 160.0 * scale;
             break;
         case ShapeKind::Slender:
         case ShapeKind::Degenerate:
-            span = static_cast<int>(400 * scale);
+            span = 400.0 * scale;
             break;
     }
-    span = std::clamp(span, 4, std::min(width, height) - 2);
+    span = std::clamp(span, 4.0, static_cast<double>(std::min(width, height)) - 2.0);
 
-    const int margin = std::min(span + 2, std::max(1, std::min(width, height) / 2 - 1));
+    const double margin = std::min(span + 2.0,
+                                   std::max(1.0, std::min(width, height) / 2.0 - 1.0));
 
     std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> xDist(margin, width - 1 - margin);
-    std::uniform_int_distribution<int> yDist(margin, height - 1 - margin);
+    std::uniform_real_distribution<double> xDist(margin, width - 1.0 - margin);
+    std::uniform_real_distribution<double> yDist(margin, height - 1.0 - margin);
 
-    const int equilateralHeight = static_cast<int>(span * std::sqrt(3.0) / 2.0);
-    const int slenderWidth = std::max(2, static_cast<int>(12 * scale));
+    const double equilateralHeight = span * std::sqrt(3.0) / 2.0;
+    const double slenderWidth = std::max(2.0, 12.0 * scale);
 
     std::vector<BenchTriangle> triangles;
     triangles.reserve(count);
 
     for (std::size_t i = 0; i < count; ++i) {
-        const int centerX = xDist(rng);
-        const int centerY = yDist(rng);
+        const double centerX = xDist(rng);
+        const double centerY = yDist(rng);
 
-        BenchTriangle triangle{0, 0, 0, 0, 0, 0};
+        BenchTriangle triangle{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
         switch (kind) {
             case ShapeKind::Equilateral:
-                triangle = {centerX, centerY - equilateralHeight / 2,
-                            centerX - span / 2, centerY + equilateralHeight / 2,
-                            centerX + span / 2, centerY + equilateralHeight / 2};
+                triangle = {centerX, centerY - equilateralHeight / 2.0,
+                            centerX - span / 2.0, centerY + equilateralHeight / 2.0,
+                            centerX + span / 2.0, centerY + equilateralHeight / 2.0};
                 break;
             case ShapeKind::Slender:
-                triangle = {centerX, centerY - span / 2,
-                            centerX - slenderWidth / 2, centerY + span / 2,
-                            centerX + slenderWidth / 2, centerY + span / 2};
+                triangle = {centerX, centerY - span / 2.0,
+                            centerX - slenderWidth / 2.0, centerY + span / 2.0,
+                            centerX + slenderWidth / 2.0, centerY + span / 2.0};
                 break;
             case ShapeKind::Degenerate: {
-                const int slope = static_cast<int>(span * 0.1);
-                triangle = {centerX - span / 2, centerY + slope,
+                const double slope = span * 0.1;
+                triangle = {centerX - span / 2.0, centerY + slope,
                             centerX, centerY,
-                            centerX + span / 2, centerY - slope};
+                            centerX + span / 2.0, centerY - slope};
                 break;
             }
         }
@@ -740,17 +807,17 @@ void printGroupMemorySummary(const BenchmarkGroup &group, const std::vector<Case
     std::cout << "分配次数 : " << allocationSum << " 次\n";
 }
 
-// 找到 triangle_3 在 benchmark 表里的下标，作为像素校验的基准实现。
-std::size_t findReferenceIndex() {
+// 找到指定实验在 benchmark 表里的下标。
+std::size_t findBenchmarkIndex(RasterizeFn fn) {
     for (std::size_t i = 0; i < benchmarks.size(); ++i) {
-        if (benchmarks[i].fn == triangle_3) {
+        if (benchmarks[i].fn == fn) {
             return i;
         }
     }
     return 0;
 }
 
-// 运行一整组测试：对组内每个条件，让所有实现各跑 rounds 轮并输出平均值，
+// 运行一整组测试：对组内每个条件，让四个实验各跑 rounds 轮并输出平均值，
 // 同时采集该组的内存占用（峰值 / 平均 / 增长 / 泄漏 / 分配次数）。
 void runBenchmarkGroup(const BenchmarkGroup &group) {
     std::cout << "\n==================== " << group.title << " ====================\n";
@@ -762,9 +829,9 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
         std::cerr << "无法创建输出目录 " << group.outputDir << ": " << errorCode.message() << "\n";
     }
 
-    std::cout << std::left << std::setw(16) << "条件" << std::right;
+    std::cout << std::left << std::setw(18) << "条件" << std::right;
     for (const BenchEntry &entry : benchmarks) {
-        std::cout << std::setw(16) << (std::string(entry.name) + "(ms)");
+        std::cout << std::setw(18) << (std::string(entry.name) + "(ms)");
     }
     std::cout << "\n";
 
@@ -811,13 +878,13 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
                     const std::size_t index = (round % 2 == 0) ? step : (benchmarks.size() - 1 - step);
                     samples[index][round] =
                         renderAllTimed(benchmarkCase.triangles, timingFramebuffer, benchmarks[index].fn);
-                    sampleMemory(); // 每种实现的每一轮都采一次
+                    sampleMemory(); // 每个实验的每一轮都采一次
                 }
 
                 if (group.verbose) {
                     std::cout << std::setw(4) << (round + 1);
                     for (std::size_t index = 0; index < benchmarks.size(); ++index) {
-                        std::cout << std::setw(16) << std::fixed << std::setprecision(2) << samples[index][round];
+                        std::cout << std::setw(18) << std::fixed << std::setprecision(2) << samples[index][round];
                     }
                     std::cout << "\n";
                 }
@@ -836,9 +903,9 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
                 }
             }
 
-            std::cout << std::left << std::setw(16) << benchmarkCase.label << std::right;
+            std::cout << std::left << std::setw(18) << benchmarkCase.label << std::right;
             for (const TimingStats &stat : stats) {
-                std::cout << std::setw(16) << std::fixed << std::setprecision(2) << stat.average;
+                std::cout << std::setw(18) << std::fixed << std::setprecision(2) << stat.average;
             }
             std::cout << "\n";
 
@@ -857,41 +924,50 @@ void runBenchmarkGroup(const BenchmarkGroup &group) {
                       << "（平均 " << stats[fastestIndex].average << " ms）\n";
 
             if (group.checked) {
-                // 模型组：以 triangle_3 为基准做像素校验，并保存每个实现的输出图。
-                const std::size_t referenceIndex = findReferenceIndex();
-                TGAImage reference(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
-                renderAll(benchmarkCase.triangles, reference, benchmarks[referenceIndex].fn);
-                sampleMemory(); // 基准图已分配
+                // 模型组：以 A（旧环境）和 C（每像素直接计算）为对照，统计四个实验的像素差异。
+                const std::size_t oldIndex = findBenchmarkIndex(rasterizeIntegerIncrement);
+                const std::size_t referenceIndex = findBenchmarkIndex(rasterizeDirectPixel);
 
-                std::cout << "\n像素校验（基准 = triangle_3）\n";
-                std::cout << "注：所有实现都带背面剔除；差异来自填充边界取整不同"
-                             "（triangle_1 用闭区间、triangle_2 用半开区间）以及"
-                             "triangle_1 会跳过交点数量不为 2 的扫描行，属于预期行为。\n";
-                std::cout << "函数           非黑像素     与基准不同像素\n";
+                TGAImage imageA(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                renderAll(benchmarkCase.triangles, imageA, benchmarks[oldIndex].fn);
+                TGAImage imageC(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
+                renderAll(benchmarkCase.triangles, imageC, benchmarks[referenceIndex].fn);
+                sampleMemory(); // A / C 两张对照图已分配
+
+                std::cout << "\n像素校验（对照 A = 整数坐标 + 增量，基准 C = 小数坐标 + 每像素直接计算）\n";
+                std::cout << "注：A 先把小数坐标截断成整数，差异来自取整；\n"
+                             "    B 保留小数但增量用 float，与 C 的差异反映摄像机小数坐标下的累积误差；\n"
+                             "    D 用 double 做增量，与 C 的差异应明显小于 B。\n";
+                std::cout << "函数           非黑像素       与A不同       与C不同\n";
 
                 for (std::size_t i = 0; i < benchmarks.size(); ++i) {
+                    const TGAImage *image = nullptr;
                     TGAImage generated;
-                    const TGAImage *image = &reference;
-                    if (i != referenceIndex) {
+                    if (i == oldIndex) {
+                        image = &imageA;
+                    } else if (i == referenceIndex) {
+                        image = &imageC;
+                    } else {
                         generated = TGAImage(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
                         renderAll(benchmarkCase.triangles, generated, benchmarks[i].fn);
                         image = &generated;
                     }
 
-                    const PixelCheck check = checkAgainstReference(*image, reference);
+                    const PixelDiff diff = compareImages(*image, imageA, imageC);
                     std::cout << std::left << std::setw(14) << benchmarks[i].name << std::right
-                              << std::setw(13) << check.nonBlack
-                              << std::setw(18) << check.differentFromReference << "\n";
+                              << std::setw(13) << diff.nonBlack
+                              << std::setw(15) << diff.differentFromA
+                              << std::setw(15) << diff.differentFromC << "\n";
 
                     const std::string imagePath =
                         (std::filesystem::path(group.outputDir) / ("bench_" + std::string(benchmarks[i].name) + ".tga")).string();
                     anyImageFailed = !image->write_tga_file(imagePath, false) || anyImageFailed;
                 }
-                sampleMemory(); // 基准图 + 当前实现图的峰值时刻
+                sampleMemory(); // A / C / 当前实验图共存时的峰值时刻
             } else if (!benchmarkCase.imageName.empty()) {
-                // 其它组只输出 triangle_3 的代表图，用于肉眼确认该条件下的几何覆盖情况。
+                // 其它组只输出 C 的代表图，用于肉眼确认该条件下的几何覆盖情况。
                 TGAImage image(benchmarkCase.width, benchmarkCase.height, TGAImage::RGB);
-                renderAll(benchmarkCase.triangles, image, triangle_3);
+                renderAll(benchmarkCase.triangles, image, rasterizeDirectPixel);
                 sampleMemory(); // 代表图已分配
 
                 const std::string imagePath =
@@ -1005,17 +1081,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // 模型组的小数屏幕坐标由摄像机 + 透视投影 + 视口变换真实生成。
     std::size_t modelBytes = 0;
     std::vector<BenchTriangle> modelTriangles =
-        makeTrianglesTracked([&] { return buildTriangles(model, size, size); }, modelBytes);
+        makeTrianglesTracked([&] { return buildCameraTriangles(model, size, size); }, modelBytes);
     const int derivedRounds = std::max(3, rounds / 20);
 
-    std::cout << "====================== 三角形光栅化性能测试 ======================\n";
+    std::cout << "====================== 三角形光栅化精度实验 ======================\n";
     std::cout << "模型文件 : " << modelPath << "\n";
     std::cout << "模型规模 : " << model.nverts() << " 个顶点, " << model.nfaces() << " 个三角形\n";
     std::cout << "基准画布 : " << size << " x " << size << "\n";
     std::cout << "模型轮数 : " << rounds << "，派生测试轮数 : " << derivedRounds << "\n";
-    std::cout << "测速对象 : triangle_1, triangle_2, triangle_3_1, triangle_3, triangle_4, triangle_5\n";
+    std::cout << "实验对象 : A 整数坐标+int增量（旧环境） | B 小数坐标+float增量（摄像机影响）\n";
+    std::cout << "           C 小数坐标+逐像素直接计算（稳定基准） | D 小数坐标+double增量（精度改善）\n";
     std::cout << "内存统计 : 全局 new/delete 记账（峰值 / 平均 / 增长 / 泄漏 / 分配次数）\n";
 #ifdef _OPENMP
     std::cout << "OpenMP   : 已启用\n";
@@ -1024,9 +1102,9 @@ int main(int argc, char **argv) {
 #endif
     std::cout << "输出目录 : out/test/{model,resolution,count,size,shape}\n";
 
-    // 1. 模型测试：完整模型，逐轮输出 + 像素校验 + 每个实现一张图。
+    // 1. 模型测试：完整模型，逐轮输出 + 像素校验 + 每个实验一张图。
     BenchmarkGroup modelGroup;
-    modelGroup.title = "模型测试（diablo3_pose.obj）";
+    modelGroup.title = "模型测试（diablo3_pose.obj，摄像机投影后的小数屏幕坐标）";
     modelGroup.outputDir = "out/test/model";
     modelGroup.rounds = rounds;
     modelGroup.verbose = true;
@@ -1034,7 +1112,7 @@ int main(int argc, char **argv) {
     modelGroup.cases.push_back({"diablo3_pose", std::move(modelTriangles), size, size, "", modelBytes});
     runBenchmarkGroup(modelGroup);
 
-    // 2. 分辨率测试：同一模型，画布从 1/4 到 2 倍基准尺寸。
+    // 2. 分辨率测试：同一模型与视角，画布从 1/4 到 2 倍基准尺寸。
     BenchmarkGroup resolutionGroup;
     resolutionGroup.title = "分辨率测试";
     resolutionGroup.outputDir = "out/test/resolution";
@@ -1052,7 +1130,7 @@ int main(int argc, char **argv) {
         const std::string imageName = "res_" + std::to_string(resolution) + ".tga";
         std::size_t dataBytes = 0;
         auto triangles = makeTrianglesTracked(
-            [&] { return buildTriangles(model, resolution, resolution); }, dataBytes);
+            [&] { return buildCameraTriangles(model, resolution, resolution); }, dataBytes);
         resolutionGroup.cases.push_back(
             {label, std::move(triangles), resolution, resolution, imageName, dataBytes});
     }
@@ -1071,7 +1149,7 @@ int main(int argc, char **argv) {
         std::size_t dataBytes = 0;
         auto triangles = makeTrianglesTracked(
             [&] {
-                return makeRandomTriangles(count, 6, 12, size, size,
+                return makeRandomTriangles(count, 6.0, 12.0, size, size,
                                            static_cast<unsigned>(2024 + count));
             },
             dataBytes);
@@ -1088,20 +1166,20 @@ int main(int argc, char **argv) {
     struct SizeSpec {
         const char *label;
         const char *imageName;
-        int radiusMin;
-        int radiusMax;
+        double radiusMin;
+        double radiusMax;
     };
     const SizeSpec sizeSpecs[] = {
-        {"小", "size_small.tga", 4, 8},
-        {"中", "size_medium.tga", 16, 32},
-        {"大", "size_large.tga", 48, 96},
+        {"小", "size_small.tga", 4.0, 8.0},
+        {"中", "size_medium.tga", 16.0, 32.0},
+        {"大", "size_large.tga", 48.0, 96.0},
     };
     for (const SizeSpec &spec : sizeSpecs) {
         std::size_t dataBytes = 0;
         auto triangles = makeTrianglesTracked(
             [&] {
                 return makeRandomTriangles(200, spec.radiusMin, spec.radiusMax, size, size,
-                                           static_cast<unsigned>(3000 + spec.radiusMin));
+                                           static_cast<unsigned>(3000 + static_cast<int>(spec.radiusMin)));
             },
             dataBytes);
         sizeGroup.cases.push_back(

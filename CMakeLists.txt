@@ -54,6 +54,12 @@ target_link_libraries(SoftRasterizer PRIVATE softrasterizer_core)
 add_executable(SoftRasterizerTest
     test/main.cpp
     src/model/model.cpp          # 测试也要加载 OBJ，复用同一份解析实现
+    src/camera/camera.cpp        # 模型组的小数屏幕坐标由摄像机 + 透视投影生成
+    src/pipeline/modelView.cpp   # 与 src/main.cpp 使用同一套视图变换
+    src/pipeline/perspective.cpp # 透视投影矩阵（近远平面来自相机空间 z）
+    src/pipeline/viewPort.cpp    # 视口变换，保留小数屏幕坐标
+    src/pipeline/clipper.cpp     # 视锥裁剪，避免 w<=0 的顶点参与透视除法
+    src/zbuffer/zbuffer.cpp      # 透视投影需要从 ZBuffer 读取近远平面
 )
 
 target_include_directories(SoftRasterizerTest PRIVATE ${PROJECT_SOURCE_DIR}/src)
