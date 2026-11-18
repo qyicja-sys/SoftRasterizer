@@ -131,12 +131,17 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
             if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
+            //构建深度映射系数A和B，用于转换1/w为NDC Z
             double A = (N+F)/(F-N);
             double B = -2*N*F/(F-N);
+            //利用重心插值计算插值1/w，获取当前像素的深度信息
             double invW = alpha / clip[ 0 ].w + beta / clip[ 1 ].w + gamma / clip[ 2 ].w;
+            //计算当前像素的NDC Z
             double ndcZ = A + B * invW;
+            //映射深度值
+            //clamp的作用就是将ndcZ的范围限制在[0,254]之间，避免超出范围(可能会有浮点数误差、裁剪误差等)
             unsigned char z = static_cast < unsigned char >(
-                std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));
+                std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));//将范围从[-1,1]->[0,2]->[0,1]->[0,254]
             if(!zBuffer.testAndSet(x, y, z)) continue;
             zMap.set(x, y,  {static_cast<uint8_t>(255 - z)});
         }
