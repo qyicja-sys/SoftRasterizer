@@ -90,6 +90,23 @@ void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipp
     this->m = model;
 }
 
+void rasterize::rasterizeSetZbuffer(ZBuffer zBuffer){
+    this->zBuffer = zBuffer;
+}
+
+void rasterize::rasterizeSetModel(Model& model){
+    this->m = model;
+}
+
+void rasterize::rasterizeSetModelView(camera& camera, Model& model){
+    this->TGAmodelView.lookat(camera, model);
+}
+
+modelView rasterize::getModelView() const{
+    return TGAmodelView;
+}
+
+
 //单独初始化modelView
 void rasterize::initModelView(camera& camera, Model& model){
     TGAmodelView.lookat(camera, model);
@@ -101,7 +118,7 @@ mat<4,4,double> rasterize::getModelViewMatrix() const{
 }
 
 
-void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuffer, const TGAColor color){
+void rasterize::rasterize_colorMap(const vector<Vec4>& clip, const IShader& shader, TGAImage& framebuffer){
     // TODO: 实现颜色映射
     // mat<4,4,double> modelView = TGAmodelView.getModelViewMatrix();
     // mat<4,4,double> perspective = TGAperspective.getPerspectiveMatrix();
@@ -143,8 +160,8 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
             double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
             double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
             double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
-            // const double eps = 1e-2 ;
-            // if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
+            Vec3 bc = {alpha, beta, gamma};
+            
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
             double A = (N+F)/(F-N);
@@ -154,12 +171,16 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, TGAImage& framebuff
             unsigned char z = static_cast < unsigned char >(
                 std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));
             if(!zBuffer.testAndSet(x, y, z)) continue;
+
+            auto [discard, color] = shader.fragment(bc);
+            if (discard) continue;
+
             framebuffer.set(x, y, color);
         }
     }
 }
 
-void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
+void rasterize::rasterize_depthMap(const vector<Vec4>& clip, const IShader& shader, TGAImage& zMap){
     // TODO: 实现深度映射
     mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
     Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
@@ -199,8 +220,9 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
             double alpha = signed_triangle_area(x, y, screen[1].x, screen[1].y, screen[2].x, screen[2].y) / triangle_area;
             double beta = signed_triangle_area(x, y, screen[2].x, screen[2].y, screen[0].x, screen[0].y) / triangle_area;
             double gamma = signed_triangle_area(x, y, screen[0].x, screen[0].y, screen[1].x, screen[1].y) / triangle_area;
-            // const double eps = 1e-2 ;
-            // if (alpha < -eps || beta < -eps || gamma < -eps) continue ;// 重心坐标为负 => 该像素在三角形之外
+            Vec3 bc = {alpha, beta, gamma};
+            auto [discard, color] = shader.fragment(bc);
+
             double N = zBuffer.getNearPlane();
             double F = zBuffer.getFarPlane();
             //构建深度映射系数A和B，用于转换1/w为NDC Z
@@ -215,6 +237,7 @@ void rasterize::rasterize_depthMap(const vector<Vec4>& clip, TGAImage& zMap){
             unsigned char z = static_cast < unsigned char >(
                 std:: clamp ((ndcZ + 1.0 ) * 0.5 * 254.0 , 0.0 , 254.0 ));//将范围从[-1,1]->[0,2]->[0,1]->[0,254]
             if(!zBuffer.testAndSet(x, y, z)) continue;
+            if (discard) continue;
             // 深度图改用“线性相机空间深度”可视化：
             // NDC z 在透视投影下是非线性的，精度几乎都集中在近平面附近，
             // 直接映射会让模型大部分表面挤在黑色一端，与背景分不清。
