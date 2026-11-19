@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include "vertex/vertex.h"
 #include <string>
 #include <array>
 #include <cmath>
@@ -22,21 +23,38 @@ struct screenVert
 class Model{
     // 所有顶点，对应 OBJ 的 v 行
     std::vector<Vec3> vecList;
+    //存储所有顶点的位置、法线
+    std::vector<Vertex> vertexList;
     // 所有三角形面，每个元素存 3 个顶点下标（已从 OBJ 的 1-based 转成 0-based）
-    std::vector<std::array<int,3>> faceList;
+    std::vector<std::array<int,3>> faceVertList;
+    //所有所有三角形面，每个元素存 3 个顶点纹理下标
+    std::vector<std::array<int,3>> faceTexList;
+    // 所有三角形面，每个元素存 3 个顶点法线下标
+    std::vector<std::array<int,3>> facenormalList;
     mat<4,4,double> modelMatrix;
 
     public:
         // 解析 OBJ 文件；打不开、格式错误或索引越界都返回 false
         bool load(const std::string& filename);
 
-        int nverts() const;// 顶点数量
-        int nfaces() const;// 三角形面数量
+        int nverts_V() const;// 顶点数量
+        int nfaces_V() const;// 三角形面数量
+
+        int nfaces_T() const;// 纹理三角形面数量
+
+        int nverts_N() const;// 法线顶点数量
+        int nfaces_N() const;// 法线三角形面数量
 
         // 按下标取顶点 / 面。内部用 vector::at，越界会抛 std::out_of_range。
-        const Vec3& vert(int i) const;
-        const std::array<int,3>& face(int i) const;
+        const Vec3& vertV(int i) const;
+        const std::array<int,3>& faceVert(int i) const;
+        // 按下标取法线 / 法线面
+        const Vec3& vertN(int i) const;
+        const std::array<int,3>& faceNormal(int i) const;
 
         mat<4,4,double> getModelMatrix() const;
         void setModelMatrix(Vec3 position, Vec3 rotation, Vec3 scale);
+
+        //array<int,3>顶点转vector<Vec3>
+        std::vector<Vec3> faceVertVec(int i) const;
 };
