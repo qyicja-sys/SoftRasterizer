@@ -41,6 +41,7 @@ struct TGAImage {
     void flip_vertically();//垂直翻转
     TGAColor get(const int x, const int y) const;//获取指定位置的颜色
     void set(const int x, const int y, const TGAColor &c);//修改指定位置的颜色
+    void clear(const TGAColor &c);//用指定颜色填充整张图片
     //获取图片尺寸
     int width()  const;
     int height() const;

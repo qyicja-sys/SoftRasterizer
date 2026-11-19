@@ -8,6 +8,12 @@ TGAImage::TGAImage(const int w, const int h, const int bpp, TGAColor c) : w(w), 
             set(i, j, c);
 }
 
+void TGAImage::clear(const TGAColor &c) {
+    for (int j=0; j<h; j++)
+        for (int i=0; i<w; i++)
+            set(i, j, c);
+}
+
 bool TGAImage::read_tga_file(const std::string filename) {
     std::ifstream in;
     in.open(filename, std::ios::binary);
