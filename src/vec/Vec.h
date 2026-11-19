@@ -11,10 +11,10 @@
 #endif
 
 struct Vec2{
-    float x;
-    float y;
+    double x;
+    double y;
 
-    Vec2(float x,float y) : x(x), y(y) {}
+    Vec2(double x,double y) : x(x), y(y) {}
 
     // 向量的加减法
     Vec2 operator+(const Vec2& other) const {
@@ -42,11 +42,12 @@ inline Vec3 operator*(const mat<3,3>& m, const Vec3& v);
 // 模型空间中的三维点：x、y、z 对应 OBJ 文件 v 行的三个数。
 // 本轮只做线框，z 暂时不参与绘制，但先原样保留，后面做深度测试要用。
 struct Vec3{
-    float x;
-    float y;
-    float z;
+    double x;
+    double y;
+    double z;
 
-    Vec3(float x,float y, float z) : x(x), y(y), z(z) {}
+    Vec3() : x(0), y(0), z(0) {}
+    Vec3(double x,double y, double z) : x(x), y(y), z(z) {}
     // 向量的加减法
     Vec3 operator+(const Vec3& other) const {
         return Vec3(x + other.x, y + other.y, z + other.z);
@@ -108,12 +109,12 @@ inline Vec3 normalize(const Vec3& v){
 }
 
 struct Vec4{
-    float x;
-    float y;
-    float z;
-    float w;
+    double x;
+    double y;
+    double z;
+    double w;
 
-    Vec4(float x,float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+    Vec4(double x,double y, double z, double w) : x(x), y(y), z(z), w(w) {}
     // 向量的加减法
     Vec4 operator+(const Vec4& other) const {
         return Vec4(x + other.x, y + other.y, z + other.z, w + other.w);
@@ -134,7 +135,7 @@ struct Vec4{
     }
 
     // 向量的点积
-       float operator*(const Vec4& other) const {
+       double operator*(const Vec4& other) const {
         return x * other.x + y * other.y + z * other.z + w * other.w;
     }
 
