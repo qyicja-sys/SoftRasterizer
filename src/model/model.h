@@ -6,7 +6,20 @@
 #include <cmath>
 #include "vec/Vec.h"
 
+struct Material {
+    //RGB 三个颜色通道可以拥有不同的反射系数
+    Vec3 Ka;       // 环境光反射系数
+    Vec3 Kd;       // 漫反射系数
+    Vec3 Ks;       // 镜面反射系数
+    double Ns;      // 高光指数
+};
 
+struct Light {
+    Vec3 position;       // 光源位置
+    Vec3 ambient;        // 环境光强度
+    Vec3 diffuse;        // 漫反射光强度
+    Vec3 specular;       // 镜面反射光强度
+};
 
 // 完成“模型空间 -> 屏幕空间”映射后的顶点。
 // x、y 是像素坐标（整数）；z 仍是模型空间的深度值，留到 z-buffer 阶段使用。
@@ -33,7 +46,11 @@ class Model{
     std::vector<std::array<int,3>> facenormalList;
     mat<4,4,double> modelMatrix;
 
+    Material material;
+    Light light;
+
     public:
+
         // 解析 OBJ 文件；打不开、格式错误或索引越界都返回 false
         bool load(const std::string& filename);
 
@@ -57,4 +74,14 @@ class Model{
 
         //array<int,3>顶点转vector<Vec3>
         std::vector<Vec3> faceVertVec(int i) const;
+
+        //获取材质
+        Material getMaterial() const;
+        //获取光源
+        Light getLight() const;
+
+        //设置材质
+        void setMaterial(Vec3 Ka, Vec3 Kd, Vec3 Ks, double Ns);
+        //设置光源
+        void setLight(Vec3 position, Vec3 ambient, Vec3 diffuse, Vec3 specular);
 };

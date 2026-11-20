@@ -87,7 +87,7 @@ bool Model::load(const std::string& filename){
                 //组成一个法线
                 Vec3 list = {x, y, z};
                 //进入顶点组（位置留空，法线存进 normal）
-                vertexList.push_back({Vec3(0,0,0), list});
+                vertexList.push_back({Vec4(0,0,0,1), list});
             }else{
                 return false;
             }
@@ -164,4 +164,22 @@ void Model::setModelMatrix(Vec3 position, Vec3 rotation, Vec3 scale){
         * matrix::rotationY(rotation.y)
         * matrix::rotationZ(rotation.z)
         * matrix::scale(scale.x, scale.y, scale.z);
+}
+
+void Model::setMaterial(Vec3 Ka, Vec3 Kd, Vec3 Ks, double Ns){
+    material = {Ka, Kd, Ks, Ns};
+    this->material = material;
+}
+
+void Model::setLight(Vec3 position, Vec3 ambient, Vec3 diffuse, Vec3 specular){
+    light = {position, ambient, diffuse, specular};
+    this->light = light;
+}
+
+Material Model::getMaterial() const{
+    return material;
+}
+
+Light Model::getLight() const{
+    return light;
 }
