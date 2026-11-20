@@ -14,6 +14,7 @@
 #include "pipeline/clipper.h"
 #include "pipeline/viewport.h"
 #include "pipeline/rasterize.h"
+#include "vertex/vertex.h"
 
 
 
@@ -51,6 +52,53 @@ struct randomShader : IShader {
     }
 };
 
+struct phongShader : IShader {
+    const Model &model;
+    TGAColor color = {};
+
+    phongShader(const Model &model) : model(model) {}
+
+    virtual Vec3 calculateLight(camera& camera, Vec3 normalVec, Vec3 fragmentVec){
+        Material material = model.getMaterial();
+        Light light = model.getLight();
+        normalVec = normalize(normalVec);
+
+        // 全部用局部变量，避免并行光栅化时多线程写同一份 shader 成员（数据竞争）
+        Vec3 Ambient = material.Ka.mul(light.ambient);
+
+        Vec3 LightVec = normalize(light.position - fragmentVec);
+        double diffuseFactor = std::max(0.0, normalVec*LightVec);
+        Vec3 Diffuse = material.Kd.mul(light.diffuse) * diffuseFactor;
+
+        // 只有光照正面（N·L > 0）时反射才有意义，否则跳过镜面项避免背面假高光
+        Vec3 Specular(0, 0, 0);
+        if (diffuseFactor > 0.0) {
+            Vec3 ReflectVec = 2*normalVec*diffuseFactor - LightVec;
+            Vec3 ViewVec = normalize(camera.getPosition() - fragmentVec);
+            Specular = material.Ks.mul(light.specular)
+                     * pow(std::max(0.0, ReflectVec*ViewVec), material.Ns);
+        }
+        return Ambient + Diffuse + Specular;
+    }
+
+    virtual Vec4 vertex(const int vert) const {
+        Vec3 v = model.vertV(vert);
+        Vec4 v4 = v.toVec4();
+        return TGArasterize.rasterizeGetClipVec(v4);
+        //return v4;
+    }
+    
+    virtual std::pair<bool,TGAColor> fragment(const Vec3 bar) const {
+        return {false, color};                                    // 暂时处理
+    }
+    
+};
+
+void Generate_LightAndMaterial(Model& model){
+    model.setMaterial(Vec3(0.15, 0.15, 0.15), Vec3(0.8,  0.8,  0.8), Vec3(0.5,  0.5,  0.5), 32.0);
+    model.setLight(Vec3(0, 1, 2), Vec3(0.15, 0.15, 0.15), Vec3(1.0, 1.0, 1.0), Vec3(1.0, 1.0, 1.0));
+}
+
 int main(int argc, char** argv){
     // 创建帧缓冲。TGAImage 构造函数会用默认颜色 TGAColor{}（全 0 = 黑色）
     // 填满整张图，所以不需要手动刷黑背景，画上去的线会覆盖对应像素。
@@ -82,6 +130,8 @@ int main(int argc, char** argv){
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
     Model newModel;
     bool flag = newModel.load("obj/diablo3_pose.obj");
+    Generate_LightAndMaterial(newModel);
+    
     if(flag){
         // 只看数量不够——如果某个字段读错位，数量仍然可能对，但坐标会整体错掉。
         Vec3 firstVect = newModel.vertV(0);
@@ -108,6 +158,7 @@ int main(int argc, char** argv){
 
         TGArasterize.rasterizeSetZbuffer(zBuffer);
         TGArasterize.rasterizeSetModel(newModel);
+        TGArasterize.rasterizeSetCamera(newCamera);
         //TGArasterize.rasterizeSet(newModelView, newPerspective, newClipper, newViewport, zBuffer, newModel);  // zBuffer 此时已是有效值
         TGArasterize.rasterizeInit(newCamera, width, height);
 
@@ -115,30 +166,40 @@ int main(int argc, char** argv){
         // face(i) 返回的是 3 个“顶点下标”，不是坐标；
         // 必须再用 vert(下标) 查表，才能拿到真正的 3D 坐标。
         for(int i=0;i<newModel.nfaces_V();i++){
-            randomShader shader(newModel);
+            phongShader shader(newModel);
             const std::array<int,3> modelFace = newModel.faceVert(i);// 第 i 个面的 3 个顶点下标
+            const std::array<int,3> modelNormalFace = newModel.faceNormal(i);// 第 i 个面的 3 个法线下标
 
             // 先收集这个三角形的 3 个屏幕点，再统一画线。
             // 这里创建空 vector 后 push 三次；不能写成 vector(3) 再 push，
             // 那样会先得到 3 个默认元素，再加 3 个新元素，共 6 个。
-            std::vector<Vec4> clip;
-            clip.reserve(3);
+            // std::vector<Vec4> clip;
+            // clip.reserve(3);
+
+            // std:vector<Vec3> normal;
+            // normal.reserve(3);
+
+            std::vector<Vertex> clip;
+            
 
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
-                int index = modelFace.at(j);// 模型空间中的 3D 顶点
-                clip.push_back(shader.vertex(index));
+                int index1 = modelFace.at(j);// 模型空间中的 3D 顶点
+                int index2 = modelNormalFace.at(j);// 模型空间中的 3D 法线
+                Vec3 world = (newModel. getModelMatrix () * newModel. vertV (index1). toVec4 ()). toVec3 ();
+                Vertex v = {shader. vertex (index1), newModel. vertN (index2), world};
+                clip.push_back(v);
             }
             clipper clipPolygon;
             clipPolygon.isClipped(clip);
-            vector<vector<Vec4>> ready_rasterize_face = clipPolygon.triangulation();
+            vector<vector<Vertex>> ready_rasterize_face = clipPolygon.triangulation();
             
             
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             for(int i=0;i<ready_rasterize_face.size();i++){
                 shader.color = { std::rand()%255, std::rand()%255, std::rand()%255, 255 };
-                //TGArasterize.rasterize_colorMap(ready_rasterize_face[i], shader, framebuffer);
-                TGArasterize.rasterize_depthMap(ready_rasterize_face[i], shader, zMap);
+                TGArasterize.rasterize_colorMap(ready_rasterize_face[i], shader, framebuffer);
+                //TGArasterize.rasterize_depthMap(ready_rasterize_face[i], shader, zMap);
             }
         }
 
@@ -147,8 +208,8 @@ int main(int argc, char** argv){
         // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        //framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
-        zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
+        framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
+        //zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
         zBuffer.clear();
     }else{
         std::cerr << "模型加载失败" << std::endl;
