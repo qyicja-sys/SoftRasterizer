@@ -11,13 +11,16 @@ clipper::clipper(){
 clipper::~clipper(){
 }
 
-Vec4 Tinterpolate(Vec4 S, Vec4 E ,float DS,float DE){
+Vertex Tinterpolate(Vertex S, Vertex E ,float DS,float DE){
     float t = -DS/(DE-DS);
-    Vec4 result = S+(E-S)*t;
+    Vec4 position = S.position+(E.position-S.position)*t;
+    Vec3 normal = (1-t)*S.normal+t*E.normal;
+    Vec3 worldPos = S.worldPos + (E.worldPos - S.worldPos) * t;
+    Vertex result = {position, normal, worldPos};
     return result;
 }
 
-void clipper::pushOutput(double DS,double DE,Vec4 S,Vec4 E){
+void clipper::pushOutput(double DS,double DE,Vertex S,Vertex E){
     bool S_inside = DS >= 0;
     bool E_inside = DE >= 0;
      if(S_inside && E_inside){
@@ -32,10 +35,10 @@ void clipper::pushOutput(double DS,double DE,Vec4 S,Vec4 E){
 
 void clipper::leftplane(){
     for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.x+S.w;
-        double DE = E.x+E.w;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.x+S.position.w;
+        double DE = E.position.x+E.position.w;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
@@ -44,10 +47,10 @@ void clipper::leftplane(){
 
 void clipper::rightplane(){
    for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.w-S.x;
-        double DE = E.w-E.x;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.w-S.position.x;
+        double DE = E.position.w-E.position.x;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
@@ -56,10 +59,10 @@ void clipper::rightplane(){
 
 void clipper::bottomplane(){
     for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.y+S.w;
-        double DE = E.y+E.w;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.y+S.position.w;
+        double DE = E.position.y+E.position.w;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
@@ -68,10 +71,10 @@ void clipper::bottomplane(){
 
 void clipper::topplane(){
     for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.w-S.y;
-        double DE = E.w-E.y;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.w-S.position.y;
+        double DE = E.position.w-E.position.y;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
@@ -80,10 +83,10 @@ void clipper::topplane(){
 
 void clipper::nearplane(){
     for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.z+S.w;
-        double DE = E.z+E.w;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.z+S.position.w;
+        double DE = E.position.z+E.position.w;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
@@ -92,17 +95,17 @@ void clipper::nearplane(){
 
 void clipper::farplane(){
     for (int i = 0; i < polygon.size(); i++) {
-        Vec4 S = polygon[i];
-        Vec4 E = polygon[(i + 1) % polygon.size()];
-        double DS = S.w-S.z;
-        double DE = E.w-E.z;
+        Vertex S = polygon[i];
+        Vertex E = polygon[(i + 1) % polygon.size()];
+        double DS = S.position.w-S.position.z;
+        double DE = E.position.w-E.position.z;
         pushOutput(DS,DE,S,E);
     }
     polygon = output;
     output.clear();
 }
 
-void clipper::isClipped(vector<Vec4> polygon){
+void clipper::isClipped(vector<Vertex> polygon){
     this->polygon = polygon;
     if(polygon.size() < 3){
         return;
@@ -115,16 +118,16 @@ void clipper::isClipped(vector<Vec4> polygon){
     farplane();
 }
 
-vector<vector<Vec4>> clipper::triangulation() const{
-    vector<vector<Vec4>> clippedTriangle;
+vector<vector<Vertex>> clipper::triangulation() const{
+    vector<vector<Vertex>> clippedTriangle;
     if (polygon.size() < 3)
         return clippedTriangle;
     // 三角形三角剖分
     for (int i = 1; i < polygon.size() - 1; i++){
-        Vec4 A = polygon[0];
-        Vec4 B = polygon[i];
-        Vec4 C = polygon[i + 1];
-        vector<Vec4> triangle;
+        Vertex A = polygon[0];
+        Vertex B = polygon[i];
+        Vertex C = polygon[i + 1];
+        vector<Vertex> triangle;
         triangle.push_back(A);
         triangle.push_back(B);
         triangle.push_back(C);

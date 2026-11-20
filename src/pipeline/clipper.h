@@ -1,5 +1,6 @@
 #pragma once
 #include "vec/Vec.h"
+#include "vertex/vertex.h"
 #include "pipeline/perspective.h"
 #include <vector>
 
@@ -8,8 +9,8 @@ using namespace std;
 class clipper{
     private:
         int ousideCount = 0;
-        vector<Vec4> polygon;
-        vector<Vec4> output;
+        vector<Vertex> polygon;
+        vector<Vertex> output;
         
     public:
         clipper();
@@ -22,9 +23,9 @@ class clipper{
         void nearplane();
         void farplane();
 
-        void pushOutput(double DS,double DE,Vec4 S,Vec4 E);
-        void isClipped(vector<Vec4> polygon);
-        vector<vector<Vec4>> triangulation() const;
+        void pushOutput(double DS,double DE,Vertex S,Vertex E);
+        void isClipped(vector<Vertex> polygon);
+        vector<vector<Vertex>> triangulation() const;
 
         // double getClip(int index) const;
         int getOutsideCount() const;
