@@ -60,9 +60,19 @@ struct Vec3{
         return x * other.x + y * other.y + z * other.z;
     }
 
+    //向量的乘法
+    Vec3 operator*(const double& other) const {
+        return Vec3(x * other, y * other, z * other);
+    }
+
     //向量的除法
-    Vec3 operator/(const float& other) const {
+    Vec3 operator/(const double& other) const {
         return Vec3(x / other, y / other, z / other);
+    }
+
+    //逐分量相乘（各通道分别相乘，用于颜色/光照强度）
+    Vec3 mul(const Vec3& other) const {
+        return Vec3(x * other.x, y * other.y, z * other.z);
     }
 
     // 向量的模长
@@ -79,6 +89,11 @@ inline Vec3 operator*(const mat<3,3>& m, const Vec3& v) {
     return Vec3(m(0,0)*v.x + m(0,1)*v.y + m(0,2)*v.z,
                 m(1,0)*v.x + m(1,1)*v.y + m(1,2)*v.z,
                 m(2,0)*v.x + m(2,1)*v.y + m(2,2)*v.z);
+}
+
+// 常量乘向量：成员 operator* 只支持 "向量 * 常量"，常量写在左侧需要这个自由函数
+inline Vec3 operator*(double s, const Vec3& v) {
+    return v * s;
 }
 
 // 绕坐标轴旋转，angle 单位为度。这些函数不依赖 this，做成自由函数便于在 main 里直接调用
@@ -113,6 +128,9 @@ struct Vec4{
     double y;
     double z;
     double w;
+
+    //默认构造函数
+    Vec4() : x(0), y(0), z(0), w(0) {}
 
     Vec4(double x,double y, double z, double w) : x(x), y(y), z(z), w(w) {}
     // 向量的加减法
@@ -162,8 +180,15 @@ struct Vec4{
     Vec2 getScreenCoord() const{
         return Vec2(x, y);
     }
-    
+
+    //vec4转vec3（定义见文件末尾）
+    Vec3 toVec3() const;
 };
+
+//vec4 转 vec3：齐次坐标 w 去掉
+inline Vec3 Vec4::toVec3() const {
+    return Vec3(x, y, z);
+}
 
 //vec3 转 vec4：齐次坐标 w 补 1
 inline Vec4 Vec3::toVec4() const {
