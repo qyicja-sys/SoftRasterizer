@@ -3,6 +3,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 // TGA 文件头（Header）所需要的全部字段
 #pragma pack(push,1)//内存对齐
@@ -28,6 +29,13 @@ struct TGAColor {
     std::uint8_t bytespp = 4;
     std::uint8_t& operator[](const int i) { return bgra[i]; }
     const std::uint8_t& operator[](const int i) const { return bgra[i]; }
+
+    TGAColor operator*(const double s) const {
+        auto c = [s](std::uint8_t v){
+            return static_cast<std::uint8_t>(std::clamp(v*s, 0.0, 255.0));
+        };
+        return TGAColor{c(bgra[0]), c(bgra[1]), c(bgra[2]), c(bgra[3])};
+}
 };
 
 //整张图片，负责读取、保存、修改像素，以及管理图片数据
