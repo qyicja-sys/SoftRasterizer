@@ -81,7 +81,8 @@ void rasterize::rasterizeInit(camera& camera, int width, int height){
     TGAviewPort.setViewPort();
 }
 
-void rasterize::rasterizeSet(modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer, Model& model){
+void rasterize::rasterizeSet(camera& camera, modelView modelView, perspective perspective, clipper clipper, viewPort viewPort, ZBuffer zBuffer, Model& model){
+    this->TGAcamera = camera;
     this->TGAmodelView = modelView;
     this->TGAperspective = perspective;
     this->TGAclipper = clipper;
@@ -106,6 +107,10 @@ modelView rasterize::getModelView() const{
     return TGAmodelView;
 }
 
+void rasterize::rasterizeSetCamera(camera& camera){
+    this->TGAcamera = camera;
+}
+
 
 //单独初始化modelView
 void rasterize::initModelView(camera& camera, Model& model){
@@ -118,14 +123,23 @@ mat<4,4,double> rasterize::getModelViewMatrix() const{
 }
 
 
-void rasterize::rasterize_colorMap(const vector<Vec4>& clip, const IShader& shader, TGAImage& framebuffer){
+void rasterize::rasterize_colorMap(const vector<Vertex>& clip, IShader& shader, TGAImage& framebuffer){
     // TODO: 实现颜色映射
     // mat<4,4,double> modelView = TGAmodelView.getModelViewMatrix();
     // mat<4,4,double> perspective = TGAperspective.getPerspectiveMatrix();
     mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
-    Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
+    Vec4 frag_p[clip.size()];
+    Vec3 frag_n[clip.size()];
+    Vec3 frag_w[clip.size()];
+    for (int i = 0; i < clip.size(); i++){
+        frag_p[i] = clip[i].position;
+        frag_n[i] = clip[i].normal;
+        frag_w[i] = clip[i].worldPos;
+    }
+    
+    Vec4 ndc[3] = {frag_p[0]/frag_p[0].w, frag_p[1]/frag_p[1].w, frag_p[2]/frag_p[2].w};
     Vec2 screen[3] = {(viewPort * ndc[0]).getScreenCoord(), (viewPort * ndc[1]).getScreenCoord(), (viewPort * ndc[2]).getScreenCoord()};
-    double w[3] = {clip[0].w, clip[1].w, clip[2].w};
+    double w[3] = {frag_p[0].w, frag_p[1].w, frag_p[2].w};
 
     mat<3,3> ABC = {{ {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} }};
     // 背面剔除：屏幕 y 轴向下，模型正面在屏幕上呈顺时针，对应 determinant < 0，
@@ -136,6 +150,8 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, const IShader& shad
     // insideEdge 的 E > 0 判断和 top-left 规则才能对正面生效。
     std::swap(screen[1], screen[2]);
     std::swap(w[1], w[2]);
+    std:: swap (frag_n[ 1 ], frag_n[ 2 ]);
+    std:: swap (frag_w[ 1 ], frag_w[ 2 ]);
 
     auto [bbminx,bbmaxx] = std::minmax({screen[0].x, screen[1].x, screen[2].x}); // 三角形的包围盒
     auto [bbminy,bbmaxy] = std::minmax({screen[0].y, screen[1].y, screen[2].y}); // 由左上角和右下角定义
@@ -175,17 +191,43 @@ void rasterize::rasterize_colorMap(const vector<Vec4>& clip, const IShader& shad
             auto [discard, color] = shader.fragment(bc);
             if (discard) continue;
 
-            framebuffer.set(x, y, color);
+            // 透视校正插值：世界坐标
+            Vec3 fragWorld = (alpha * frag_w[ 0 ] / w[ 0 ]
+                             + beta  * frag_w[ 1 ] / w[ 1 ]
+                             + gamma * frag_w[ 2 ] / w[ 2 ]) / invW;
+            
+            // 法线也顺便做透视校正
+            Vec3 Np = normalize ((alpha * frag_n[ 0 ] / w[ 0 ]
+                                + beta  * frag_n[ 1 ] / w[ 1 ]
+                                + gamma * frag_n[ 2 ] / w[ 2 ]) / invW);
+
+            Vec3 lightColor = shader. calculateLight (TGAcamera, Np, fragWorld);
+            // 逐通道乘光照颜色，并裁剪到 [0,255]（bgra: 0=B, 1=G, 2=R）
+            auto toByte = [](double v){ return static_cast<unsigned char>(std::clamp(v, 0.0, 255.0)); };
+            TGAColor finalColor = {
+                toByte(color.bgra[0] * lightColor.z),
+                toByte(color.bgra[1] * lightColor.y),
+                toByte(color.bgra[2] * lightColor.x),
+                color.bgra[3]
+            };
+            framebuffer.set(x, y, finalColor);
         }
     }
 }
 
-void rasterize::rasterize_depthMap(const vector<Vec4>& clip, const IShader& shader, TGAImage& zMap){
+void rasterize::rasterize_depthMap(const vector<Vertex>& clip, const IShader& shader, TGAImage& zMap){
     // TODO: 实现深度映射
     mat<4,4,double> viewPort = TGAviewPort.getViewPortMatrix();
-    Vec4 ndc[3] = {clip[0]/clip[0].w, clip[1]/clip[1].w, clip[2]/clip[2].w};
+     Vec4 frag_p[clip.size()];
+    Vec3 frag_n[clip.size()];
+    for (int i = 0; i < clip.size(); i++){
+        frag_p[i] = clip[i].position;
+        frag_n[i] = clip[i].normal;
+    }
+    
+    Vec4 ndc[3] = {frag_p[0]/frag_p[0].w, frag_p[1]/frag_p[1].w, frag_p[2]/frag_p[2].w};
     Vec2 screen[3] = {(viewPort * ndc[0]).getScreenCoord(), (viewPort * ndc[1]).getScreenCoord(), (viewPort * ndc[2]).getScreenCoord()};
-    double w[3] = {clip[0].w, clip[1].w, clip[2].w};
+    double w[3] = {frag_p[0].w, frag_p[1].w, frag_p[2].w};
 
     mat<3,3> ABC = {{ {screen[0].x, screen[0].y, 1.}, {screen[1].x, screen[1].y, 1.}, {screen[2].x, screen[2].y, 1.} }};
     // 背面剔除：屏幕 y 轴向下，模型正面在屏幕上呈顺时针，对应 determinant < 0，
