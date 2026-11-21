@@ -6,11 +6,11 @@
 void perspective::perspectiveTransform(ZBuffer& zBuffer, int width, int height){
     double Fov = cam.getFov();
     double q = 1/tan(Fov/2.0);
-    double a = width / height;
+    double a = static_cast<double>(width) / height;;
     N = zBuffer.getNearPlane();
     F = zBuffer.getFarPlane();
 
-    perspectiveMatrix = mat<4,4,double>{{q/a,0,0,0}, {0,a,0,0}, {0,0,(N+F)/(F-N),-2*N*F/(F-N)}, {0,0,1,0}};
+    perspectiveMatrix = mat<4,4,double>{{q/a,0,0,0}, {0,q,0,0}, {0,0,(N+F)/(F-N),-2*N*F/(F-N)}, {0,0,1,0}};
 }
 
 void perspective::setCamera(camera& c){
