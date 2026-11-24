@@ -11,6 +11,7 @@
 #include "vec/Vec.h"
 #include "camera/camera.h"
 #include "vertex/vertex.h"
+#include "texture/Texture.h"
 
 
 
@@ -48,8 +49,7 @@ class rasterize{
         //获取modelView矩阵
         mat<4,4,double> getModelViewMatrix() const;
 
-        void rasterize_colorMap(const vector<Vertex>& clip, IShader& shader, TGAImage& framebuffer);
-        void rasterize_depthMap(const vector<Vertex>& clip, const IShader& shader, TGAImage& zMap);
+        void rasterize_colorMap(const vector<Vertex>& clip, IShader& shader, Texture& texture, TGAImage& framebuffer);
         void rasterize_updateZBuffer(ZBuffer& zBuffer);
         void rasterize_updatePerspective();
 
