@@ -15,6 +15,7 @@
 #include "pipeline/viewport.h"
 #include "pipeline/rasterize.h"
 #include "vertex/vertex.h"
+#include "texture/Texture.h"
 
 
 
@@ -35,10 +36,12 @@ rasterize TGArasterize;
 
 struct randomShader : IShader {
     const Model &model;
+    const mat< 3 , 3 , double > normalMatrix;
     TGAColor color = {};
     Vec3 tri[3];
 
-    randomShader(const Model &model) : model(model) {}
+    randomShader(const Model &model) 
+        : model (model), normalMatrix (model. getNormalMatrix ()) {}
 
     virtual Vec4 vertex(const int vert) const {
         Vec3 v = model.vertV(vert);
@@ -54,16 +57,19 @@ struct randomShader : IShader {
 
 struct phongShader : IShader {
     const Model &model;
+    mat<3,3,double> normalMatrix = model.getNormalMatrix();
     TGAColor color = {};
 
     phongShader(const Model &model) : model(model) {}
 
     virtual Vec3 calculateLight(camera& camera, Vec3 normalVec, Vec3 fragmentVec){
-        Material material = model.getMaterial();
-        Light light = model.getLight();
+        normalVec = normalMatrix * normalVec;
         normalVec = normalize(normalVec);
 
-        // 全部用局部变量，避免并行光栅化时多线程写同一份 shader 成员（数据竞争）
+        Material material = model.getMaterial();
+        Light light = model.getLight();
+
+        // 全部用局部变量，避免并行光栅化时多线程   写同一份 shader 成员（数据竞争）
         Vec3 Ambient = material.Ka.mul(light.ambient);
 
         Vec3 LightVec = normalize(light.position - fragmentVec);
@@ -114,22 +120,24 @@ int main(int argc, char** argv){
     // clipper newClipper;
     // viewPort newViewport;
 
-    camera newCamera(500, width, height);
+    camera newCamera(700, width, height);
     // 相机必须在模型前方：worldToCamera 里 z 取反后，要求 position.z > 模型最大 z。
     // 放在原点等于站在模型内部，一半顶点 z_cam <= 0 被判为无效，
     // 另一半 z_cam 趋近 0，透视除法后坐标放大到屏幕外，最终仍是一片黑。
-    newCamera.setPosition(Vec3(0, 0, 1));
+    newCamera.setPosition(Vec3(0, 0, 1.5));
     newCamera.setCenter(Vec3(0, 0, 0));
     newCamera.setUp(Vec3(0, 1, 0));
     newCamera.setFov();
 
-    newCamera.setRotation(Vec3(15, 0, 0));//这里保存的是旋转坐标
+    newCamera.setRotation(Vec3(0, 0, 0));//这里保存的是旋转坐标
 
     // 加载 OBJ 模型。路径是相对“当前工作目录”的：
     // VSCode 的 launch.json 把 cwd 设为项目根目录，所以能找到 obj/；
     // 如果直接在 build/bin 目录下启动 exe，会因找不到文件而加载失败。
     Model newModel;
-    bool flag = newModel.load("obj/diablo3_pose.obj");
+    Texture newTexture;
+    bool flag = newModel.load("obj/african_head.obj");
+    newTexture.load("obj/african_head/african_head_nm.tga");
     Generate_LightAndMaterial(newModel);
     
     if(flag){
@@ -144,7 +152,7 @@ int main(int argc, char** argv){
         Vec3 rotation = {0,0,0};
         Vec3 scale = {1,1,1};
         newModel.setModelMatrix(position, rotation, scale);
-        newModel.setModelMatrix(position, rotation, scale);
+        newModel.setNormalMatrix();
         TGArasterize.rasterizeSetModelView(newCamera, newModel);          // 让 newModelView 真正算出来
 
         mat<4,4,double> mv = TGArasterize.getModelView().getModelViewMatrix();   // 提到循环外
@@ -169,25 +177,17 @@ int main(int argc, char** argv){
             phongShader shader(newModel);
             const std::array<int,3> modelFace = newModel.faceVert(i);// 第 i 个面的 3 个顶点下标
             const std::array<int,3> modelNormalFace = newModel.faceNormal(i);// 第 i 个面的 3 个法线下标
+            const std::array<int,3> modelTexFace = newModel.faceTex(i);// 第 i 个面的 3 个纹理坐标下标
 
-            // 先收集这个三角形的 3 个屏幕点，再统一画线。
-            // 这里创建空 vector 后 push 三次；不能写成 vector(3) 再 push，
-            // 那样会先得到 3 个默认元素，再加 3 个新元素，共 6 个。
-            // std::vector<Vec4> clip;
-            // clip.reserve(3);
-
-            // std:vector<Vec3> normal;
-            // normal.reserve(3);
-
-            std::vector<Vertex> clip;
-            
+            std::vector<Vertex> clip;     
 
             // 遍历三角形的 3 个顶点，将它们转换为屏幕坐标。
             for(int j = 0;j<3;j++){
                 int index1 = modelFace.at(j);// 模型空间中的 3D 顶点
                 int index2 = modelNormalFace.at(j);// 模型空间中的 3D 法线
+                int index3 = modelTexFace.at(j);// 模型空间中的 3D 纹理坐标
                 Vec3 world = (newModel. getModelMatrix () * newModel. vertV (index1). toVec4 ()). toVec3 ();
-                Vertex v = {shader. vertex (index1), newModel. vertN (index2), world};
+                Vertex v = {shader. vertex (index1), newModel. vertN (index2), newModel. vertT (index3), world};
                 clip.push_back(v);
             }
             clipper clipPolygon;
@@ -197,8 +197,8 @@ int main(int argc, char** argv){
             
             // 画三角形的三条边：0-1、0-2、1-2，首尾相连正好闭合。
             for(int i=0;i<ready_rasterize_face.size();i++){
-                shader.color = { std::rand()%255, std::rand()%255, std::rand()%255, 255 };
-                TGArasterize.rasterize_colorMap(ready_rasterize_face[i], shader, framebuffer);
+                //shader.color = { std::rand()%255, std::rand()%255, std::rand()%255, 255 };
+                TGArasterize.rasterize_colorMap(ready_rasterize_face[i], shader, newTexture, framebuffer);
                 //TGArasterize.rasterize_depthMap(ready_rasterize_face[i], shader, zMap);
             }
         }
@@ -208,7 +208,7 @@ int main(int argc, char** argv){
         // 看图软件于是把内存第 0 行画在画面底部，相当于又上下翻了一次。
         // 上面的映射已经把“内存第 0 行 = 画面顶部”对齐好了，
         // 所以这里声明“左上角为原点”（vflip=false），避免翻转两次。
-        framebuffer.write_tga_file("out/diablo3_pose_color.tga", false);
+        framebuffer.write_tga_file("out/african_head_color.tga", false);
         //zMap.write_tga_file("out/diablo3_pose_depth.tga", false);
         zBuffer.clear();
     }else{
