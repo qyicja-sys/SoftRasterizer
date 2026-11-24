@@ -15,8 +15,9 @@ Vertex Tinterpolate(Vertex S, Vertex E ,float DS,float DE){
     float t = -DS/(DE-DS);
     Vec4 position = S.position+(E.position-S.position)*t;
     Vec3 normal = (1-t)*S.normal+t*E.normal;
+    Vec2 textureUV = (1-t)*S.textureUV+t*E.textureUV;
     Vec3 worldPos = S.worldPos + (E.worldPos - S.worldPos) * t;
-    Vertex result = {position, normal, worldPos};
+    Vertex result = {position, normal, textureUV, worldPos};
     return result;
 }
 
