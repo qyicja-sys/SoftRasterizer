@@ -27,11 +27,25 @@ struct Vec2{
        double operator*(const Vec2& other) const {
         return x * other.x + y * other.y;
     }
+    //向量的乘法
+    Vec2 operator*(const double& other) const {
+        return Vec2(x * other, y * other);
+    }
+    //向量的除法
+    Vec2 operator/(const double& other) const {
+        return Vec2(x / other, y / other);
+    }
+
     // 向量的模长
     double magnitude() const {
         return std::sqrt(x * x + y * y);
     }
 };
+
+// 常量乘向量：支持 "常量 * Vec2"
+inline Vec2 operator*(double s, const Vec2& v) {
+    return v * s;
+}
 
 // 前置声明：Vec3 的旋转函数里要用到 mat * Vec3，运算符必须在结构体定义之前可见
 struct Vec3;
